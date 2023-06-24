@@ -111,11 +111,11 @@ def parse_sample(data, img):
     }
 
 
-class Dataset300WOriginals(object):
-    def __init__(self, filename):
+class Dataset300WLP(object):
+    def __init__(self, filename, only_originals : bool = True):
         self._zf = zf = zipfile.ZipFile(filename)
         matfiles = discover_samples(zf)
-        self._matfiles = remove_artificially_rotated_faces(matfiles)
+        self._matfiles = remove_artificially_rotated_faces(matfiles) if only_originals else matfiles
         self._bfm = bfm.BFMModel()
 
     def __getitem__(self, i):
@@ -139,3 +139,10 @@ class Dataset300WOriginals(object):
 
     def close(self):
         self._zf.close()
+    
+    def __len__(self):
+        return len(self._matfiles)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
