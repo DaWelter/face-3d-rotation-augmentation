@@ -58,3 +58,7 @@ def draw_pose(img, sample, brightness, linewidth):
         print (sample)
     else:
         cv2.circle(img, (int(xy[0]),int(xy[1])), int(s), (brightness,brightness,0), linewidth)
+    if 'pt3d_68' in sample:
+        draw_points3d(img, sample['pt3d_68'], False, brightness, (255,255,255))
+    if 'roi' in sample:
+        draw_roi(img, sample['roi'], 255, 2)

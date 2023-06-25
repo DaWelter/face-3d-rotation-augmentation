@@ -19,7 +19,7 @@ def imdecode(buffer):
     return img
 
 
-def aflw_rotation_conversion(pitch, yaw, roll):
+def convert_rotation(pitch, yaw, roll):
     # For AFLW and 300W-LP
     # It's the result of endless trial and error. Don't ask ...
     # Euler angles suck.
@@ -35,7 +35,15 @@ def aflw_rotation_conversion(pitch, yaw, roll):
     return rot
 
 
-def get_3ddfa_shape_parameters(params):
+def convert_xys(tx, ty, scale, h, w):
+    ty = h - ty
+    human_head_radius_micron = 100.e3
+    scale = 0.5*scale / 224. * w * human_head_radius_micron
+    xy = np.asarray([ tx, ty ])
+    return xy, scale
+
+
+def convert_shapeparam(params):
     """ Modified for a subset of rescaled shape vectors. 
         Also restricted to the first 40 and 10 parameters, respectively."""
     f_shp = params['Shape_Para'][:40,0]/20./1.e5
@@ -43,21 +51,46 @@ def get_3ddfa_shape_parameters(params):
     return np.concatenate([f_shp, f_exp])
 
 
-def compute_keypoints(bfm : bfm.BFMModel, shapeparams, head_size, rotation, tx, ty):
-    idx = bfm.keypoints
-    pts3d = bfm.scaled_vertices[idx] + np.sum(shapeparams[:,None,None] * bfm.scaled_bases[:,idx,:], axis=0)
-    pts3d *= head_size     
-    pts3d = rotation.apply(pts3d)
-    pts3d = pts3d.T
-    pts3d[0] += tx
-    pts3d[1] += ty
-    return pts3d
+# def compute_keypoints(bfm : bfm.BFMModel, shapeparams, head_size, rotation, tx, ty):
+#     idx = bfm.keypoints
+#     pts3d = bfm.scaled_vertices[idx] + np.sum(shapeparams[:,None,None] * bfm.scaled_bases[:,idx,:], axis=0)
+#     pts3d *= head_size     
+#     pts3d = rotation.apply(pts3d)
+#     pts3d = pts3d.T
+#     pts3d[0] += tx
+#     pts3d[1] += ty
+#     return pts3d
 
 
 def move_aflw_head_center_to_between_eyes(scale, rot, xy):
     offset_my_mangled_shape_data = np.array([0., -0.26, -0.9])
     offset = rot.apply(offset_my_mangled_shape_data)*scale
     return xy + offset[:2]
+
+
+def head_bbox_from_keypoints(keypts):
+    assert keypts.shape[-2] == 68
+    assert keypts.shape[-1] in (2,3), f"Bad shape {keypts.shape}"
+    eye_corner_indices = [45, 42, 39, 36]
+    jaw_right_idx = [0, 1]
+    jaw_left_idx = [16,15]
+    chin_idx = [ 7,8,9 ]
+    point_between_eyes = np.average(keypts[...,eye_corner_indices,:], axis=-2)
+    upvec = point_between_eyes - np.average(keypts[...,chin_idx,:], axis=-2)
+    upvec /= np.linalg.norm(upvec)
+    jaw_center_point = np.average(keypts[...,jaw_right_idx + jaw_left_idx,:],axis=-2)
+    radius = np.linalg.norm(jaw_center_point - point_between_eyes, axis=-1, keepdims=True)
+    center = 0.5*(jaw_center_point + point_between_eyes) + 0.25*radius*upvec
+    def mkpoint(cx, cy):
+        return center[...,:2] +  radius * np.array([cx, cy])
+    corners = np.asarray([ mkpoint(cx,cy) for cx,cy in [
+        (-1,1), (1,1), (1,-1), (-1,-1)
+    ] ]).swapaxes(0,-2)
+    allpoints = np.concatenate([keypts[...,:2], corners], axis=-2)
+    min_ = np.amin(allpoints[...,:2], axis=-2)
+    max_ = np.amax(allpoints[...,:2], axis=-2)
+    roi = np.concatenate([min_, max_], axis=-1).astype(np.float32)
+    return roi
 
 
 def discover_samples(zf):
@@ -81,17 +114,15 @@ def get_landmarks_filename(matfile : str):
 
 def parse_sample(data, img):
     pitch, yaw, roll, tx, ty, tz, scale = data['Pose_Para'][0]
-    rot = aflw_rotation_conversion(pitch, yaw,roll)
-
     h, w, _ = img.shape
-    ty = h - ty
-    human_head_radius_micron = 100.e3
-    scale = 0.5*scale / 224. * w * human_head_radius_micron
-    xy = np.asarray([ tx, ty ])
+
+    rot = convert_rotation(pitch, yaw,roll)
+
+    xy, scale = convert_xys(tx, ty, scale, h, w)
 
     xy = move_aflw_head_center_to_between_eyes(scale, rot, xy)
 
-    shapeparams = get_3ddfa_shape_parameters(data)
+    shapeparams = convert_shapeparam(data)
 
     # Note: Landmarks in the landmarks folder of 300wlp omit the z-coordinate.
     #       We want them too so the landmarks are reconstructed from the deformable model!
@@ -99,9 +130,6 @@ def parse_sample(data, img):
     # assert (pt3d.shape == (3,68)), f"Bad shape: {pt3d.shape}"
 
     # The matlab file contains a bounding box which is however way too big for the image size.
-    # x0, y0, _ = np.amin(pt3d, axis=1)
-    # x1, y1, _ = np.amax(pt3d, axis=1)
-    # roi = np.array([x0, y0, x1, y1])
 
     return { 
         'rot' :  rot,
