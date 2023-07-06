@@ -1,0 +1,92 @@
+from typing import List
+import os
+from matplotlib import pyplot
+import numpy as np
+import tqdm
+import cv2
+from contextlib import closing
+import sys
+
+import pyrender
+
+import face3drotationaugmentation.dataset300wlp as dataset300wlp
+import face3drotationaugmentation.vis as vis
+import face3drotationaugmentation.graphics as graphics
+import face3drotationaugmentation.sampling as sampling
+from face3drotationaugmentation import depthestimation
+from face3drotationaugmentation.datasetwriter import dataset_writer
+
+deg2rad = np.pi/180.
+
+
+def infer_nice_depth_estimate_from_image(sample):
+    depth_estimate = depthestimation.inference(sample['image'])
+    sigma = sample['scale']*0.05
+    ks = int(sigma*3) | 1
+    blurred_depth = cv2.GaussianBlur(depth_estimate,(ks,ks),sigma)
+    return blurred_depth, depth_estimate
+
+
+def main(filename300wlp, outputfilename, max_num_frames, num_additional_frames):
+    depthestimation.init()
+
+    rng = np.random.RandomState()
+
+    fig, ax, imgplot = None, None, None
+
+    with closing(dataset300wlp.Dataset300WLP(filename300wlp)) as ds300wlp, dataset_writer(outputfilename) as writer:
+        num_frames = min(max_num_frames, len(ds300wlp))
+
+        all_shapeparams = np.asarray([ s['shapeparam'] for _,s in tqdm.tqdm(zip(range(num_frames),ds300wlp), total=num_frames) ])
+
+        for _, sample in tqdm.tqdm(zip(range(num_frames), ds300wlp), total=num_frames):
+            more_rots = sampling.sample_more_face_params(sample['rot'],num_additional_frames)
+            new_shapeparams = all_shapeparams[rng.randint(0,len(all_shapeparams),size=(num_additional_frames,))]
+
+            blurred_depth, _ = infer_nice_depth_estimate_from_image(sample)
+
+            augscene = graphics.FaceAugmentationScene(sample)
+            augscene.face_model.set_non_face_by_depth_estimate(blurred_depth)
+
+            h, w, _ = sample['image'].shape
+            renderer = pyrender.OffscreenRenderer(viewport_width=w, viewport_height=h)
+
+            for more_rot, new_shapeparam in zip(more_rots, new_shapeparams):
+                rotoffset = sample['rot'].inv()*more_rot
+
+                with augscene(rotoffset, new_shapeparam) as items:
+                    scene, (R,t), keypoints = items
+                    color, _ = renderer.render(scene)
+                    color = np.ascontiguousarray(color)
+
+                roi = dataset300wlp.head_bbox_from_keypoints(keypoints)
+
+                new_sample = {
+                    'image' : color,
+                    'rot' : R,
+                    'xy' : t[:2],
+                    'scale' : sample['scale'],
+                    'pt3d_68' : keypoints,
+                    'roi' : roi,
+                    'shapeparam' : new_shapeparam,
+                    'name' : sample['name']
+                }
+
+                if np.random.randint(0,100)==0:
+                    if fig is None:
+                        fig, ax = pyplot.subplots(1,1)
+                        imgplot = ax.imshow(np.zeros((5,5,3), dtype=np.uint8))
+                    img = color.copy()
+                    vis.draw_pose(img, new_sample, 255, 2)
+                    imgplot.set_data(img)
+                    pyplot.show(block=False)
+                pyplot.pause(0.001)
+
+                writer.write(new_sample)
+
+
+
+if __name__ == '__main__':
+    filename = sys.argv[1]
+    outputfilename = sys.argv[2]
+    main(filename, outputfilename, 1<<32, 20)

@@ -51,17 +51,6 @@ def convert_shapeparam(params):
     return np.concatenate([f_shp, f_exp])
 
 
-# def compute_keypoints(bfm : bfm.BFMModel, shapeparams, head_size, rotation, tx, ty):
-#     idx = bfm.keypoints
-#     pts3d = bfm.scaled_vertices[idx] + np.sum(shapeparams[:,None,None] * bfm.scaled_bases[:,idx,:], axis=0)
-#     pts3d *= head_size     
-#     pts3d = rotation.apply(pts3d)
-#     pts3d = pts3d.T
-#     pts3d[0] += tx
-#     pts3d[1] += ty
-#     return pts3d
-
-
 def move_aflw_head_center_to_between_eyes(scale, rot, xy):
     offset_my_mangled_shape_data = np.array([0., -0.26, -0.9])
     offset = rot.apply(offset_my_mangled_shape_data)*scale
@@ -158,9 +147,12 @@ class Dataset300WLP(object):
         # with io.BytesIO(self._zf.read(get_landmarks_filename(matfile))) as f:
         #     landmarkdata = scipy.io.loadmat(f)
 
+        name = (os.path.splitext(matfile)[0]).split('/')[-1]
+
         sample = parse_sample(data, img)
         sample.update({
             'image' : img,
+            'name' : name
             #'pt2d_68' : landmarkdata['pts_2d'],
         })
         return sample
