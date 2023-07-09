@@ -98,6 +98,16 @@ class Meshdata(NamedTuple):
     normals : FloatArray
     vertex_weights : FloatArray
     uvs : Optional[FloatArray]
+    color : Optional[FloatArray]
+    deformbasis : Optional[FloatArray] # (Bases x Points x 3)
+
+    @property
+    def num_vertices(self):
+        return self.vertices.shape[0]
+
+    @property
+    def num_tris(self):
+        return self.tris.shape[0]
 
 
 class Faceparams(NamedTuple):
@@ -105,20 +115,6 @@ class Faceparams(NamedTuple):
     scale : float
     rot : Rotation
     shapeparam : Optional[FloatArray]
-
-    
-def load_base_mesh(filename):
-    with open(filename, 'rb') as f:
-        data = pickle.load(f)
-        tris = np.asarray(data['tris'])
-        base_vertices = np.asarray(data['vertices'])
-        base_vertices *= 0.01  # Vertices were changed during import in 3d software
-        base_vertices[:,1] *= -1 # Vertices were changed during import in 3d software
-        #base_vertices[:,2] *= -1
-        blend_weights = np.asarray(data['weights'])
-        # Dummy is good enough for unlit scene
-        normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(base_vertices),3))
-        return Meshdata(base_vertices, tris, normals, blend_weights, None)
 
 
 def create_pyrender_material(original_image, texture_border):
@@ -144,9 +140,8 @@ def create_pyrender_material(original_image, texture_border):
     return pyrender.MetallicRoughnessMaterial(baseColorTexture=tex, doubleSided=False)
 
 
-def compute_initial_posed_vertices(meshdata : Meshdata, bfm : bfm.BFMModel, faceparams : Faceparams):
-    vertices = meshdata.vertices.copy()
-    vertices[:bfm.vertexcount] = apply_blendshapes(vertices[:bfm.vertexcount], bfm.scaled_bases, faceparams.shapeparam)
+def compute_initial_posed_vertices(meshdata : Meshdata, faceparams : Faceparams):
+    vertices = apply_blendshapes(meshdata.vertices, meshdata.deformbasis, faceparams.shapeparam)
     unrotated_vertices = apply_s_rot_t(vertices, faceparams.xy, faceparams.scale, Rotation.identity())
     vertices = apply_s_rot_t(vertices, faceparams.xy, faceparams.scale, faceparams.rot)
     f = meshdata.vertex_weights
@@ -154,7 +149,7 @@ def compute_initial_posed_vertices(meshdata : Meshdata, bfm : bfm.BFMModel, face
     return vertices
 
 
-def re_pose(meshdata : Meshdata, bfm : bfm.BFMModel, original_faceparams : Faceparams, rot_offset, rot_offset_center, new_shapeparam):
+def re_pose(meshdata : Meshdata, original_faceparams : Faceparams, rot_offset, rot_offset_center, new_shapeparam):
     # First reverse the original pose transform, ignoring scale
     vertices = meshdata.vertices.copy()
     vertices[:,:2] -= original_faceparams.xy
@@ -162,7 +157,7 @@ def re_pose(meshdata : Meshdata, bfm : bfm.BFMModel, original_faceparams : Facep
     # Then pose the vertices according to the offset pose
     scale = original_faceparams.scale
     rot_offset_center = scale*rot_offset_center
-    vertices[:bfm.vertexcount] = apply_blendshapes(vertices[:bfm.vertexcount], scale*bfm.scaled_bases, new_shapeparam - original_faceparams.shapeparam)
+    vertices = apply_blendshapes(vertices, scale*meshdata.deformbasis, new_shapeparam - original_faceparams.shapeparam)
     vertices = rot_offset.apply(vertices - rot_offset_center) + rot_offset_center
     vertices = apply_s_rot_t(vertices, original_faceparams.xy, 1., original_faceparams.rot)
     f = meshdata.vertex_weights
@@ -174,9 +169,9 @@ def re_pose(meshdata : Meshdata, bfm : bfm.BFMModel, original_faceparams : Facep
 class FaceWithBackgroundModel(object):
     texture_border = 50 # pixels
 
-    def __init__(self, meshdata : Meshdata, bfm : bfm.BFMModel, xy, scale, rot, shapeparam, image):
+    def __init__(self, meshdata : Meshdata, xy, scale, rot, shapeparam, image):
+        self._keypoints = bfm.BFMModel().keypoints # TODO: restructure code to remove this
         self._meshdata = meshdata
-        self._bfm = bfm
         self._rot = rot
         self._xy = xy
         self._scale = scale
@@ -191,7 +186,7 @@ class FaceWithBackgroundModel(object):
         # Because the the deformation will pull parts of the mesh into the view which
         # were not part of the original image.
         
-        vertices_according_to_pose = compute_initial_posed_vertices(meshdata, bfm, self._faceparams)
+        vertices_according_to_pose = compute_initial_posed_vertices(meshdata, self._faceparams)
 
         self._laplacian = self._compute_laplacian(vertices_according_to_pose)
         
@@ -211,7 +206,7 @@ class FaceWithBackgroundModel(object):
 
     def set_non_face_by_depth_estimate(self, inverse_depth):
         vertices = self._meshdata.vertices
-        keypoints = vertices[self._bfm.keypoints,:]
+        keypoints = vertices[self._keypoints,:]
         depth = -inverse_depth
         depth_estimate_zs = interpolate_zero_channel_numpy_image(depth, keypoints[:,:2])
         calibration_offset = np.average(keypoints[:,2] - depth_estimate_zs)
@@ -222,16 +217,14 @@ class FaceWithBackgroundModel(object):
         zs = interpolate_zero_channel_numpy_image(depth, vertices[:,:2])
         vertices = vertices.copy()
         f = np.power(self._meshdata.vertex_weights, 2.)
-        vertices[:,2] = vertices[:,2]*f + (1.-f)*zs
+        vertices[:,2] = np.minimum(vertices[:,2], vertices[:,2]*f + (1.-f)*zs)
         self._meshdata = self._meshdata._replace(vertices = vertices)
         return z_calibration_curves
 
 
     def _compute_laplacian(self, vertices):
         # Precompute Laplacian for smoothing
-        mask = np.ones((vertices.shape[0],), dtype=np.bool8)
-        mask[:self._bfm.vertexcount] = False
-        mask = np.logical_and(mask, self._meshdata.vertex_weights > 0.01)
+        mask = np.logical_and(self._meshdata.vertex_weights < 0.9, self._meshdata.vertex_weights > 0.01)
         mesh = trimesh.Trimesh(vertices = vertices, faces = self._meshdata.tris)
         pinned, = np.nonzero(~mask)
         return trimesh.smoothing.laplacian_calculation(mesh, pinned_vertices=pinned)
@@ -241,17 +234,6 @@ class FaceWithBackgroundModel(object):
         mesh = trimesh.Trimesh(vertices = vertices, faces = self._meshdata.tris)
         trimesh.smoothing.filter_laplacian(mesh, lamb = 0.2, iterations=2, implicit_time_integration=True, volume_constraint=False, laplacian_operator=self._laplacian)
         return mesh.vertices
-
-
-    # def _compute_face_vertices_with_background(self, rotoffset, shapeparam):
-    #     vertices = self._base_vertices.copy()
-    #     vertices[:self._bfm.vertexcount] = apply_blendshapes(self._base_vertices[:self._bfm.vertexcount], self._bfm.scaled_bases, shapeparam)
-    #     s, R, t = self._compute_combined_transform(rotoffset)
-    #     vertices1 = apply_s_rot_t(vertices, self._xy, self._scale, Rotation.identity())
-    #     vertices2 = apply_s_rot_t(vertices, t[:2], s, R)
-    #     f = self._blend_weights
-    #     final_vertices = vertices2*f[:,None] + (1.-f)[:,None]*vertices1
-    #     return final_vertices, (R, t)
 
 
     def _compute_combined_transform(self, rotoffset):
@@ -280,7 +262,7 @@ class FaceWithBackgroundModel(object):
             rotoffset = Rotation.identity()
         if shapeparam is None:
             shapeparam = self._shapeparam
-        vertices = re_pose(self._meshdata, self._bfm, self._faceparams, rotoffset, self._rotation_center, shapeparam)
+        vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self._rotation_center, shapeparam)
         vertices = self._apply_smoothing(vertices)
         tr = self._compute_combined_transform(rotoffset)
         return (Meshdata(
@@ -288,7 +270,9 @@ class FaceWithBackgroundModel(object):
             self._meshdata.tris,
             self._meshdata.normals,
             None,
-            self._uvs
+            self._uvs,
+            self._meshdata.color,
+            None
         ), tr)
 
 
@@ -299,19 +283,24 @@ class FaceAugmentationScene(object):
         shapeparam = sample['shapeparam']
         image = sample['image']
         rot = sample['rot']
-        h, w, _ = image.shape
-        meshdata, bfm = FaceAugmentationScene.load_assets()
-        self.face_model = face_model = FaceWithBackgroundModel(meshdata, bfm, xy, scale, rot, shapeparam, image)
+        meshdata, keypoint_indices = FaceAugmentationScene.load_assets()
+        self.face_model = face_model = FaceWithBackgroundModel(meshdata, xy, scale, rot, shapeparam, image)
         self.scene = scene = pyrender.Scene(ambient_light=[1., 1., 1.], bg_color=[0.0, 0.0, 0.0])
         self.material = create_pyrender_material(image, FaceWithBackgroundModel.texture_border)
-        self.keypoint_indices = bfm.keypoints
+        self.keypoint_indices = keypoint_indices
         FaceAugmentationScene.add_camera(scene, image.shape, scale, face_model.background_plane_z_coord)
 
 
     @contextlib.contextmanager
     def __call__(self, rotoffset = None, shapeparam = None):
         meshdata, tr = self.face_model(rotoffset, shapeparam)
-        prim = pyrender.Primitive(positions = meshdata.vertices, indices=meshdata.tris, texcoord_0 = meshdata.uvs, normals=meshdata.normals, material=self.material)
+        prim = pyrender.Primitive(
+            positions = meshdata.vertices, 
+            indices=meshdata.tris, 
+            texcoord_0 = meshdata.uvs, 
+            normals=meshdata.normals, 
+            material=self.material,
+            color_0 = meshdata.color)
         mesh = pyrender.Mesh(primitives = [prim])
         face_node = self.scene.add(mesh)
         try:
@@ -336,14 +325,86 @@ class FaceAugmentationScene(object):
         ]
         scene.add(cam, pose=campose)
 
+    @staticmethod
+    def load_mesh_data(filename):
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
+            tris = np.asarray(data['tris'])
+            vertices = np.asarray(data['vertices'])
+            vertices *= 0.01  # Vertices were changed during import in 3d software
+            vertices[:,1] *= -1 
+            blend_weights = np.asarray(data['weights'])
+            # Dummy is good enough for unlit scene
+            normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(vertices),3))
+            color = np.tile(np.asarray(data['shadowmap'])[:,None], (1,3))
+            md = Meshdata(vertices, tris, normals, blend_weights, None, color, None)
+            if 'teeth_tris' in data:
+                print ("loading mesh with data", data.keys())
+                tris = np.asarray(data['teeth_tris'])
+                vertices = np.asarray(data['teeth_points'])
+                vertices *= 0.01  # Vertices were changed during import in 3d software
+                vertices[:,1] *= -1 
+                # Dummy is good enough for unlit scene
+                normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(vertices),3))
+                md2 = Meshdata(vertices, tris, normals, None, None, None, None)
+                idx_mouth_lower, = np.nonzero(data['mouth_lower'])
+                idx_mouth_upper, = np.nonzero(data['mouth_upper'])
+                return md, md2, (idx_mouth_lower, idx_mouth_upper)
+            else:
+                return md, None, None
+
+    @staticmethod
+    def join_meshes(headmesh : Meshdata, teethmesh : Meshdata, idx_mouth_lower : npt.NDArray[np.integer], idx_mouth_upper : npt.NDArray[np.integer], headmodel : bfm.BFMModel) -> Meshdata:
+        num_bases = headmodel.scaled_bases.shape[0]
+        num_pristine_vertices = headmodel.vertexcount
+        def copy_basis(vertices_without_bases, vertices, basis):
+            # Ignore y-direction since teeth are vertical and we want the same basis for upper and lower end
+            idx_closest = np.argmin(np.linalg.norm(vertices_without_bases[None,:,[0,2]]-vertices[:,None,[0,2]],axis=-1), axis=0)
+            # Use the basis of the face mouth vertex which is closest
+            #return np.zeros((num_bases, len(vertices_without_bases), 3))
+            return basis[:,idx_closest,:]
+        # This requires that the first N vertices of the headmesh correspond to the vertices in the prestine face model
+        teeth_lower_basis = copy_basis(teethmesh.vertices, headmesh.vertices[idx_mouth_lower], headmodel.scaled_bases[:,idx_mouth_lower,:])
+        teeth_upper_basis = copy_basis(teethmesh.vertices, headmesh.vertices[idx_mouth_upper], headmodel.scaled_bases[:,idx_mouth_upper,:])
+        new_vertices = np.concatenate([
+            headmesh.vertices, 
+            teethmesh.vertices, 
+            teethmesh.vertices], axis=0) #  - np.asarray([[0.,-0.01,0.]])
+        new_tris = np.concatenate([
+            headmesh.tris,
+            teethmesh.tris + headmesh.num_vertices,
+            teethmesh.tris + (headmesh.num_vertices + teethmesh.num_vertices)], axis=0)
+        new_basis = np.concatenate([
+            headmodel.scaled_bases,
+            np.zeros((num_bases, headmesh.num_vertices-num_pristine_vertices, 3)),
+            teeth_lower_basis,
+            teeth_upper_basis,
+        ], axis=1)
+        new_colors = np.concatenate([
+            headmesh.color,
+            np.ones((teethmesh.num_vertices,3)),
+            np.ones((teethmesh.num_vertices,3))
+        ], axis=0)
+        new_normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(new_vertices),3))
+        new_weights = np.concatenate([
+            headmesh.vertex_weights,
+            np.ones((teethmesh.num_vertices*2,))
+        ], axis=0)
+        return Meshdata(new_vertices, new_tris, new_normals, new_weights, None, new_colors, new_basis)
+
 
     @staticmethod
     @functools.cache
     def load_assets():
         this_file_directory = os.path.dirname(__file__)
-        base_mesh = load_base_mesh(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v3.pkl"))
+        headmesh, teethmesh, (idx_mouth_lower, idx_mouth_upper) = \
+            FaceAugmentationScene.load_mesh_data(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v5.1.pkl"))
         headmodel = bfm.BFMModel(40, 10)
-        return base_mesh, headmodel
+        if teethmesh is not None:
+            meshdata = FaceAugmentationScene.join_meshes(headmesh, teethmesh, idx_mouth_lower, idx_mouth_upper, headmodel)
+        else:
+            assert ("Add padded basis vectors to return")
+        return meshdata, headmodel.keypoints
 
 
 def test_euler_angle_functions():

@@ -20,11 +20,13 @@ def get_euler_angle_bounds_for_offset(rot):
     # viewed from the side, the more pitch becomes an in-plane rotation which 
     # imposes no visibility restrictions:
     mix = min(np.abs(h),90.)/90.
-    p_min = -45*mix + (1.-mix)*p_min
-    p_max =  45*mix + (1.-mix)*p_max
+    high_yaw_pitch_min = max(min(p,-45.),p-20.)
+    high_yaw_pitch_max = min(max(p, 45.),p+20.)
+    p_min = high_yaw_pitch_min*mix + (1.-mix)*p_min
+    p_max = high_yaw_pitch_max*mix + (1.-mix)*p_max
     # Roll is similar to pitch except the yaw-role is reversed
-    b_min = -20 + 2.*min(np.abs(b), 20.)
-    b_max =  20
+    b_min = -10 + 2.*min(np.abs(b), 20.)
+    b_max =  10
     if b < 0.:
         b_min, b_max = -b_max, -b_min
     mix = min(np.abs(h),90.)/90.
@@ -33,18 +35,18 @@ def get_euler_angle_bounds_for_offset(rot):
     return (h_min*deg2rad, h_max*deg2rad), (p_min*deg2rad, p_max*deg2rad), (b_min*deg2rad, b_max*deg2rad)
 
 
-def compute_heading_sample(h, hinterval, n):
-    hmin, hmax = hinterval
-    hmin, hmax = hmin/deg2rad, hmax/deg2rad
-    h = np.clip(h/deg2rad,-90.,90.)
-    width = hmax-hmin
-    gaussian_probability = np.clip((width-90.)/90., 0., 1.)
-    samples = np.random.exponential(scale=0.25, size=(n,))*width*np.sign(h) + h
-    mask = np.random.binomial(1, p=gaussian_probability, size=(n,)).astype(np.bool8)
-    samples[mask] = np.random.normal(scale=20.,size=(np.count_nonzero(mask),))
-    samples = np.clip(samples, -100., 100.)
-    samples *= deg2rad
-    return samples
+# def compute_heading_sample(h, hinterval, n):
+#     hmin, hmax = hinterval
+#     hmin, hmax = hmin/deg2rad, hmax/deg2rad
+#     h = np.clip(h/deg2rad,-90.,90.)
+#     width = hmax-hmin
+#     gaussian_probability = np.clip((width-90.)/90., 0., 1.)
+#     samples = np.random.exponential(scale=0.25, size=(n,))*width*np.sign(h) + h
+#     mask = np.random.binomial(1, p=gaussian_probability, size=(n,)).astype(np.bool8)
+#     samples[mask] = np.random.normal(scale=20.,size=(np.count_nonzero(mask),))
+#     samples = np.clip(samples, -100., 100.)
+#     samples *= deg2rad
+#     return samples
 
 
 def sample_more_face_params(rot, n):
@@ -52,7 +54,5 @@ def sample_more_face_params(rot, n):
     hinterval, pinterval, rinterval = get_euler_angle_bounds_for_offset(rot)
     low, high = zip(hinterval, pinterval, rinterval)
     low, high = map(np.asarray, (low, high))
-    #hpb = np.random.uniform(low = low, high=high, size=(n,3))
     hpb = np.clip(np.random.normal(size=(n,3))*(high-low)[None,:]*0.25 + 0.5*(high+low)[None,:], low[None,:], high[None,:])
-    #hpb[:,0] = compute_heading_sample(h, hinterval, n)
     return graphics.make_rot(hpb)

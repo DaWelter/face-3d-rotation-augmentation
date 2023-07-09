@@ -41,7 +41,10 @@ def main(filename300wlp, outputfilename, max_num_frames, num_additional_frames):
 
         for _, sample in tqdm.tqdm(zip(range(num_frames), ds300wlp), total=num_frames):
             more_rots = sampling.sample_more_face_params(sample['rot'],num_additional_frames)
-            new_shapeparams = all_shapeparams[rng.randint(0,len(all_shapeparams),size=(num_additional_frames,))]
+            
+            new_shapeparams = [ sample['shapeparam'] for _ in range(num_additional_frames) ]
+            # TODO: Sampling an new face shape requires to transfer the texture to the teeth
+            #new_shapeparams = all_shapeparams[rng.randint(0,len(all_shapeparams),size=(num_additional_frames,))]
 
             blurred_depth, _ = infer_nice_depth_estimate_from_image(sample)
 
