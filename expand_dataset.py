@@ -27,7 +27,7 @@ def infer_nice_depth_estimate_from_image(sample):
     return blurred_depth, depth_estimate
 
 
-def main(filename300wlp, outputfilename, max_num_frames, num_additional_frames):
+def main(filename300wlp, outputfilename, max_num_frames):
     depthestimation.init()
 
     rng = np.random.RandomState()
@@ -37,12 +37,16 @@ def main(filename300wlp, outputfilename, max_num_frames, num_additional_frames):
     with closing(dataset300wlp.Dataset300WLP(filename300wlp)) as ds300wlp, dataset_writer(outputfilename) as writer:
         num_frames = min(max_num_frames, len(ds300wlp))
 
-        all_shapeparams = np.asarray([ s['shapeparam'] for _,s in tqdm.tqdm(zip(range(num_frames),ds300wlp), total=num_frames) ])
+        #all_shapeparams = np.asarray([ s['shapeparam'] for _,s in tqdm.tqdm(zip(range(num_frames),ds300wlp), total=num_frames) ])
 
         for _, sample in tqdm.tqdm(zip(range(num_frames), ds300wlp), total=num_frames):
-            more_rots = sampling.sample_more_face_params(sample['rot'],num_additional_frames)
+            name = sample['name']
+            assert name.endswith("_0")
+            name = name[:-2]
             
-            new_shapeparams = [ sample['shapeparam'] for _ in range(num_additional_frames) ]
+            more_rots = sampling.sample_more_face_params(sample['rot'], rng)
+
+            new_shapeparams = [ sample['shapeparam'] for _ in more_rots ]
             # TODO: Sampling an new face shape requires to transfer the texture to the teeth
             #new_shapeparams = all_shapeparams[rng.randint(0,len(all_shapeparams),size=(num_additional_frames,))]
 
@@ -72,7 +76,7 @@ def main(filename300wlp, outputfilename, max_num_frames, num_additional_frames):
                     'pt3d_68' : keypoints,
                     'roi' : roi,
                     'shapeparam' : new_shapeparam,
-                    'name' : sample['name']
+                    'name' : name
                 }
 
                 if np.random.randint(0,100)==0:
@@ -92,4 +96,4 @@ def main(filename300wlp, outputfilename, max_num_frames, num_additional_frames):
 if __name__ == '__main__':
     filename = sys.argv[1]
     outputfilename = sys.argv[2]
-    main(filename, outputfilename, 1<<32, 20)
+    main(filename, outputfilename, 20)

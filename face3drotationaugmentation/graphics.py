@@ -65,6 +65,21 @@ def apply_s_rot_t(vertices, xy, scale, rot):
     return vertices
 
 
+def find_closest_points(reference_points, distanced_points):
+    cross_distances = np.linalg.norm(reference_points[None,:,:]-distanced_points[:,None,:],axis=-1)
+    idx_closest = np.argmin(cross_distances, axis=1)
+    distances, = np.take_along_axis(cross_distances, idx_closest[:,None], axis=1).T
+    return idx_closest, distances
+
+
+def test_find_closest_points():
+    a, b = find_closest_points(np.asarray([[0.,10.,0.],[0.,0.,0.],[0.,0.,2.]]), np.asarray([[0.,1.,0.],[0.,0.,2.]]))
+    np.testing.assert_array_equal(a, [1, 2])
+    np.testing.assert_allclose(b, [1., 0.])
+
+test_find_closest_points()
+
+
 def interpolate_images(values, sample_points):
     '''
     values: Image like with shape (...,C,H,W)
@@ -182,15 +197,17 @@ class FaceWithBackgroundModel(object):
 
         h, w = image.shape[:2]
 
+        self._meshdata = self._meshdata._replace(vertex_weights = self._compute_weights_dynamically(self._meshdata, xy, scale, rot, 1., 0.1))
+
         # Extra border to generate black pixels outside of the original image region.
         # Because the the deformation will pull parts of the mesh into the view which
         # were not part of the original image.
         
-        vertices_according_to_pose = compute_initial_posed_vertices(meshdata, self._faceparams)
+        vertices_according_to_pose = compute_initial_posed_vertices(self._meshdata, self._faceparams)
 
-        self._laplacian = self._compute_laplacian(vertices_according_to_pose)
+        #self._laplacian = self._compute_laplacian(vertices_according_to_pose)
         
-        vertices_according_to_pose = self._apply_smoothing(vertices_according_to_pose)
+        #vertices_according_to_pose = self._apply_smoothing(vertices_according_to_pose)
 
         # By default, without texture border, the range from [0,w] is mapped to [0,1]
         # With border ...
@@ -202,6 +219,18 @@ class FaceWithBackgroundModel(object):
         self.background_plane_z_coord = np.average(vertices_according_to_pose[self._meshdata.vertex_weights < 0.01,2])
 
         self._meshdata = self._meshdata._replace(vertices = vertices_according_to_pose)
+
+    def _compute_weights_dynamically(self, meshdata : Meshdata, xy, scale, rot, range, decay_start_at):
+        face_vertex_mask = meshdata.vertex_weights > 0.99
+        not_face_mask = ~face_vertex_mask
+        face_indices, = np.nonzero(face_vertex_mask)
+        face_indices = face_indices[np.random.randint(0,len(face_indices), size = 5000)]
+        del face_vertex_mask
+        idx_closest, distances = find_closest_points(meshdata.vertices[face_indices,:], meshdata.vertices[not_face_mask,:])
+        falloff = np.exp(np.maximum(distances - decay_start_at, 0.) * (-1./range))
+        weights = meshdata.vertex_weights.copy()
+        weights[not_face_mask] = falloff
+        return weights
 
 
     def set_non_face_by_depth_estimate(self, inverse_depth):
@@ -263,7 +292,7 @@ class FaceWithBackgroundModel(object):
         if shapeparam is None:
             shapeparam = self._shapeparam
         vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self._rotation_center, shapeparam)
-        vertices = self._apply_smoothing(vertices)
+        #vertices = self._apply_smoothing(vertices)
         tr = self._compute_combined_transform(rotoffset)
         return (Meshdata(
             vertices,
@@ -327,69 +356,101 @@ class FaceAugmentationScene(object):
 
     @staticmethod
     def load_mesh_data(filename):
-        with open(filename, 'rb') as f:
-            data = pickle.load(f)
-            tris = np.asarray(data['tris'])
-            vertices = np.asarray(data['vertices'])
+        def _create_mesh(vertices, tris, shadowmap = None):
+            tris = np.asarray(tris)
+            vertices = np.asarray(vertices)
             vertices *= 0.01  # Vertices were changed during import in 3d software
             vertices[:,1] *= -1 
-            blend_weights = np.asarray(data['weights'])
             # Dummy is good enough for unlit scene
             normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(vertices),3))
-            color = np.tile(np.asarray(data['shadowmap'])[:,None], (1,3))
-            md = Meshdata(vertices, tris, normals, blend_weights, None, color, None)
-            if 'teeth_tris' in data:
-                print ("loading mesh with data", data.keys())
-                tris = np.asarray(data['teeth_tris'])
-                vertices = np.asarray(data['teeth_points'])
-                vertices *= 0.01  # Vertices were changed during import in 3d software
-                vertices[:,1] *= -1 
-                # Dummy is good enough for unlit scene
-                normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(vertices),3))
-                md2 = Meshdata(vertices, tris, normals, None, None, None, None)
-                idx_mouth_lower, = np.nonzero(data['mouth_lower'])
-                idx_mouth_upper, = np.nonzero(data['mouth_upper'])
-                return md, md2, (idx_mouth_lower, idx_mouth_upper)
-            else:
-                return md, None, None
+            color = np.tile(np.asarray(shadowmap)[:,None], (1,3)) if shadowmap is not None else None
+            return Meshdata(vertices, tris, normals, None, None, color, None)
+
+        with open(filename, 'rb') as f:
+            data = pickle.load(f)
+            print ("Loaded mesh data:", data.keys())
+            md = _create_mesh(data['vertices'], data['tris'])
+            md_teeth = _create_mesh(data['teeth_points'], data['teeth_tris'])
+            md_surrounding = _create_mesh(data['surrounding_points'], data['surrounding_tris'])
+            md_mouth = _create_mesh(data['mouth_points'], data['mouth_tris'], data['mouth_shadowmap'])
+            md_surrounding = md_surrounding._replace(tris = np.ascontiguousarray(md_surrounding.tris[:,[2,1,0]]))
+            idx_mouth_lower, = np.nonzero(data['mask_mouth_lower'])
+            idx_mouth_upper, = np.nonzero(data['mask_mouth_upper'])
+            return md, md_teeth, md_surrounding, md_mouth, (idx_mouth_lower, idx_mouth_upper)
 
     @staticmethod
-    def join_meshes(headmesh : Meshdata, teethmesh : Meshdata, idx_mouth_lower : npt.NDArray[np.integer], idx_mouth_upper : npt.NDArray[np.integer], headmodel : bfm.BFMModel) -> Meshdata:
+    def join_meshes(headmesh : Meshdata, teethmesh : Meshdata, surrounding : Meshdata, mouth : Meshdata, indices : Tuple[npt.NDArray[np.integer],...], headmodel : bfm.BFMModel) -> Meshdata:
+        assert headmesh.num_vertices == headmodel.vertexcount
+        idx_mouth_lower, idx_mouth_upper = indices
+        idx_mouth_upper_and_lower = np.concatenate([idx_mouth_lower, idx_mouth_upper])
+        idx_face_subset = np.random.randint(0, headmesh.num_vertices, size=1000) # For speed
         num_bases = headmodel.scaled_bases.shape[0]
-        num_pristine_vertices = headmodel.vertexcount
-        def copy_basis(vertices_without_bases, vertices, basis):
+        def copy_basis(vertices_without_bases, vertices, basis, falloff=10000., decay_start_at=0.):
             # Ignore y-direction since teeth are vertical and we want the same basis for upper and lower end
-            idx_closest = np.argmin(np.linalg.norm(vertices_without_bases[None,:,[0,2]]-vertices[:,None,[0,2]],axis=-1), axis=0)
             # Use the basis of the face mouth vertex which is closest
-            #return np.zeros((num_bases, len(vertices_without_bases), 3))
-            return basis[:,idx_closest,:]
+            idx_closest, distances = find_closest_points(vertices, vertices_without_bases)
+            if 0:
+                import matplotlib.pyplot as pyplot
+                pyplot.scatter(vertices.T[0], vertices.T[2], c='r')
+                pyplot.scatter(vertices[idx_closest].T[0], vertices[idx_closest].T[2],c='b',marker='x')
+                pyplot.scatter(vertices_without_bases.T[0], vertices_without_bases.T[2],c='b')
+                pyplot.show()
+            weight = np.exp(-np.maximum(distances - decay_start_at, 0.) / falloff)
+            return basis[:,idx_closest,:]*weight[None,:,None]
+        def combine_triangles(meshes):
+            vertexcounts = [0] + [ m.num_vertices for m in meshes[:-1] ]
+            offsets = np.cumsum(vertexcounts)
+            new_tris = np.concatenate([
+                (m.tris + o) for m,o in zip(meshes, offsets)
+            ], axis=0)
+            return new_tris
         # This requires that the first N vertices of the headmesh correspond to the vertices in the prestine face model
-        teeth_lower_basis = copy_basis(teethmesh.vertices, headmesh.vertices[idx_mouth_lower], headmodel.scaled_bases[:,idx_mouth_lower,:])
-        teeth_upper_basis = copy_basis(teethmesh.vertices, headmesh.vertices[idx_mouth_upper], headmodel.scaled_bases[:,idx_mouth_upper,:])
+        teeth_lower_basis = copy_basis(teethmesh.vertices[:,[0,2]], headmesh.vertices[idx_mouth_lower][:,[0,2]], headmodel.scaled_bases[:,idx_mouth_lower,:])
+        teeth_upper_basis = copy_basis(teethmesh.vertices[:,[0,2]], headmesh.vertices[idx_mouth_upper][:,[0,2]], headmodel.scaled_bases[:,idx_mouth_upper,:])
+        surrounding_basis = copy_basis(
+            surrounding.vertices, 
+            headmesh.vertices[idx_face_subset], 
+            headmodel.scaled_bases[:,idx_face_subset,:], 0.01, 0.1)
+        mouth_basis = copy_basis(
+            mouth.vertices,
+            headmesh.vertices[idx_mouth_upper_and_lower],
+            headmodel.scaled_bases[:,idx_mouth_upper_and_lower,:], 1.)
         new_vertices = np.concatenate([
-            headmesh.vertices, 
+            headmesh.vertices,
+            mouth.vertices, 
             teethmesh.vertices, 
-            teethmesh.vertices], axis=0) #  - np.asarray([[0.,-0.01,0.]])
-        new_tris = np.concatenate([
-            headmesh.tris,
-            teethmesh.tris + headmesh.num_vertices,
-            teethmesh.tris + (headmesh.num_vertices + teethmesh.num_vertices)], axis=0)
+            teethmesh.vertices,
+            surrounding.vertices,], axis=0)
+        new_tris = combine_triangles([ 
+            headmesh, 
+            mouth, 
+            teethmesh, 
+            teethmesh, 
+            surrounding 
+        ])
         new_basis = np.concatenate([
             headmodel.scaled_bases,
-            np.zeros((num_bases, headmesh.num_vertices-num_pristine_vertices, 3)),
+            mouth_basis,
             teeth_lower_basis,
             teeth_upper_basis,
+            surrounding_basis
         ], axis=1)
         new_colors = np.concatenate([
-            headmesh.color,
+            np.ones((headmesh.num_vertices,3)),
+            mouth.color,
+            # np.ones((mouth.num_vertices,3)),
             np.ones((teethmesh.num_vertices,3)),
-            np.ones((teethmesh.num_vertices,3))
+            np.ones((teethmesh.num_vertices,3)),
+            np.ones((surrounding.num_vertices,3))
         ], axis=0)
         new_normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(new_vertices),3))
         new_weights = np.concatenate([
-            headmesh.vertex_weights,
-            np.ones((teethmesh.num_vertices*2,))
+            np.ones((headmesh.num_vertices,)),
+            np.ones((mouth.num_vertices,)),
+            np.ones((teethmesh.num_vertices*2,)),
+            np.zeros((surrounding.num_vertices,))
         ], axis=0)
+        #new_colors = new_weights[:,None]*np.asarray([[1.,0.,0.]])
         return Meshdata(new_vertices, new_tris, new_normals, new_weights, None, new_colors, new_basis)
 
 
@@ -397,11 +458,11 @@ class FaceAugmentationScene(object):
     @functools.cache
     def load_assets():
         this_file_directory = os.path.dirname(__file__)
-        headmesh, teethmesh, (idx_mouth_lower, idx_mouth_upper) = \
-            FaceAugmentationScene.load_mesh_data(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v5.1.pkl"))
+        headmesh, teethmesh, surrounding, mouth, indices = \
+            FaceAugmentationScene.load_mesh_data(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v6.1.pkl"))
         headmodel = bfm.BFMModel(40, 10)
         if teethmesh is not None:
-            meshdata = FaceAugmentationScene.join_meshes(headmesh, teethmesh, idx_mouth_lower, idx_mouth_upper, headmodel)
+            meshdata = FaceAugmentationScene.join_meshes(headmesh, teethmesh, surrounding, mouth, indices, headmodel)
         else:
             assert ("Add padded basis vectors to return")
         return meshdata, headmodel.keypoints

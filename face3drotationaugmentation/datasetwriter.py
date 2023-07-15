@@ -15,7 +15,6 @@ class FieldCategory(object):
     xys = 'xys'
     roi = 'roi'
     points = 'pts'
-    landmarks = 'lmk'
     semseg = 'seg'
 
 
@@ -57,7 +56,7 @@ class DatasetWriter(object):
             for ds, category in [
                 (ds_quats,FieldCategory.quat),
                 (ds_coords,FieldCategory.xys),
-                (ds_pt3d_68,FieldCategory.landmarks),
+                (ds_pt3d_68,FieldCategory.points),
                 (ds_roi,FieldCategory.roi),
                 (ds_img,FieldCategory.image),
             ]:
@@ -74,7 +73,7 @@ class DatasetWriter(object):
         return imagefilename
 
     def write(self, sample):
-        assert (set(sample.keys()) == set(['rot','xy','scale','image','name','pt3d_68', 'roi', 'shapeparam']))
+        assert (set(sample.keys()) == set(['rot','xy','scale','image','name','pt3d_68', 'roi', 'shapeparam'])), f"Bad sample {list(sample.keys())}"
         sample = copy(sample)
         sample['image'] = self._handle_image(sample)
         del sample['name']

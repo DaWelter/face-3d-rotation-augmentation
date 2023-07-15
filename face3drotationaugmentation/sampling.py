@@ -3,56 +3,32 @@ from . import graphics
 
 deg2rad = np.pi/180.
 
-def get_euler_angle_bounds_for_offset(rot):
-    h,p,b = map(lambda x: x/deg2rad, graphics.get_hpb(rot))
-    h_limit_at_h_zero = 25.
-    h_high_slope = 3.
-    h_min = min(np.abs(h), -h_limit_at_h_zero + h_high_slope*min(np.abs(h),90.), 90.)
-    h_max = min(np.abs(h)*h_high_slope+ h_limit_at_h_zero , 90.)
-    if h < 0.:
-        h_min, h_max = -h_max, -h_min
-    # for zero yaw
-    p_min = -45. + 2.*min(np.abs(p), 45.)
-    p_max =  45.
-    if p < 0.:
-        p_min, p_max = -p_max, -p_min
-    # for the current yaw, we can be more liberal because the more the face is 
-    # viewed from the side, the more pitch becomes an in-plane rotation which 
-    # imposes no visibility restrictions:
-    mix = min(np.abs(h),90.)/90.
-    high_yaw_pitch_min = max(min(p,-45.),p-20.)
-    high_yaw_pitch_max = min(max(p, 45.),p+20.)
-    p_min = high_yaw_pitch_min*mix + (1.-mix)*p_min
-    p_max = high_yaw_pitch_max*mix + (1.-mix)*p_max
-    # Roll is similar to pitch except the yaw-role is reversed
-    b_min = -10 + 2.*min(np.abs(b), 20.)
-    b_max =  10
-    if b < 0.:
-        b_min, b_max = -b_max, -b_min
-    mix = min(np.abs(h),90.)/90.
-    b_min = -20.*(1.-mix) + mix*b_min
-    b_max =  20.*(1.-mix) + mix*b_max
-    return (h_min*deg2rad, h_max*deg2rad), (p_min*deg2rad, p_max*deg2rad), (b_min*deg2rad, b_max*deg2rad)
+def clipped_normal(rng, min, max, scale_multi=0.5, *args, **kwargs):
+    return np.clip(rng.normal(0.5*(min+max), scale_multi*0.5*(max-min), *args, **kwargs), min, max)
 
+def get_h_samples(h, p, b, rng):
+    h_min = np.abs(h)
+    h_max = 90.
+    stepsize = 5.
+    num_bins = max(1, round((h_max-h_min)/stepsize))
+    actual_spacing = (h_max-h_min)/num_bins
+    points = np.linspace(h_min, h_max, num=num_bins, endpoint=False)
+    points = points + actual_spacing * rng.uniform(0., 1., num_bins)
+    return np.sign(h)*points
 
-# def compute_heading_sample(h, hinterval, n):
-#     hmin, hmax = hinterval
-#     hmin, hmax = hmin/deg2rad, hmax/deg2rad
-#     h = np.clip(h/deg2rad,-90.,90.)
-#     width = hmax-hmin
-#     gaussian_probability = np.clip((width-90.)/90., 0., 1.)
-#     samples = np.random.exponential(scale=0.25, size=(n,))*width*np.sign(h) + h
-#     mask = np.random.binomial(1, p=gaussian_probability, size=(n,)).astype(np.bool8)
-#     samples[mask] = np.random.normal(scale=20.,size=(np.count_nonzero(mask),))
-#     samples = np.clip(samples, -100., 100.)
-#     samples *= deg2rad
-#     return samples
+def get_p_bounds(h_samples, p):
+    n = len(h_samples)
+    p_min = np.full((n,),p) - 10.
+    p_max = np.full((n,),p) + 10.
+    np.testing.assert_array_less(p_min, p_max)
+    return p_min, p_max
 
-
-def sample_more_face_params(rot, n):
-    h,p,b = graphics.get_hpb(rot)
-    hinterval, pinterval, rinterval = get_euler_angle_bounds_for_offset(rot)
-    low, high = zip(hinterval, pinterval, rinterval)
-    low, high = map(np.asarray, (low, high))
-    hpb = np.clip(np.random.normal(size=(n,3))*(high-low)[None,:]*0.25 + 0.5*(high+low)[None,:], low[None,:], high[None,:])
+def sample_more_face_params(rot, rng):
+    h,p,b = (1./deg2rad)*graphics.get_hpb(rot)
+    hsamples = get_h_samples(h,p,b, rng)
+    psamples = clipped_normal(rng, *get_p_bounds(hsamples, p), 0.25)
+    bsamples = clipped_normal(rng, *get_p_bounds(hsamples, b), 0.25)
+    hpb = np.stack([hsamples,psamples,bsamples],axis=-1)
+    hpb = np.concatenate([np.asarray([[h,p,b]]), hpb])
+    hpb = deg2rad*np.clip(hpb, np.array([[-90.,-60.,-60]]), np.array([[90.,60.,60]]))
     return graphics.make_rot(hpb)
