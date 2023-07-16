@@ -6,6 +6,7 @@ import tqdm
 import cv2
 from contextlib import closing
 import sys
+import argparse
 
 import pyrender
 
@@ -93,6 +94,9 @@ def main(filename300wlp, outputfilename, max_num_frames):
 
 
 if __name__ == '__main__':
-    filename = sys.argv[1]
-    outputfilename = sys.argv[2]
-    main(filename, outputfilename, 1<<32)
+    parser = argparse.ArgumentParser("Pose dataset expander")
+    parser.add_argument("_300wlp", type=str, help="300 wlp zip file")
+    parser.add_argument("outputfilename", type=str, help="hdf5 file")
+    parser.add_argument("-n", help="subset of n samples", type=int, default=1<<32)
+    args = parser.parse_args()
+    main(args._300wlp, args.outputfilename, args.n)

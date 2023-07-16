@@ -70,14 +70,14 @@ class DatasetWriter(object):
     def _handle_image(self, name, sample):
         os.makedirs(os.path.dirname(os.path.join(self._imagedir, name)), exist_ok=True)
         i = self._counts_by_name[name]
-        imagefilename = f"{sample['name']}_{i:02d}.jpg"
+        imagefilename = f"{name}_{i:02d}.jpg"
         self._counts_by_name[name] += 1
         Image.fromarray(sample['image']).save(
             os.path.join(self._imagedir, imagefilename), quality=99)
         return imagefilename
 
     def write(self, name, sample):
-        assert (set(sample.keys()) == set(['rot','xy','scale','image','name','pt3d_68', 'roi', 'shapeparam'])), f"Bad sample {list(sample.keys())}"
+        assert (set(sample.keys()) == set(['rot','xy','scale','image','pt3d_68', 'roi', 'shapeparam'])), f"Bad sample {list(sample.keys())}"
         sample = copy(sample)
         sample['image'] = self._handle_image(name, sample)
         sample['rot'] = sample['rot'].as_quat()

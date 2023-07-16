@@ -4,6 +4,7 @@ import os
 import numpy as np
 import numpy.typing as npt
 from scipy.spatial.transform import Rotation
+from scipy.spatial import cKDTree
 import pickle
 from PIL import Image
 import functools
@@ -71,9 +72,13 @@ def apply_s_rot_t(vertices, xy, scale, rot):
 
 
 def find_closest_points(reference_points, distanced_points):
-    cross_distances = np.linalg.norm(reference_points[None,:,:]-distanced_points[:,None,:],axis=-1)
-    idx_closest = np.argmin(cross_distances, axis=1)
-    distances, = np.take_along_axis(cross_distances, idx_closest[:,None], axis=1).T
+    if len(reference_points)*len(distanced_points) < 100:
+        cross_distances = np.linalg.norm(reference_points[None,:,:]-distanced_points[:,None,:],axis=-1)
+        idx_closest = np.argmin(cross_distances, axis=1)
+        distances, = np.take_along_axis(cross_distances, idx_closest[:,None], axis=1).T
+    else:
+        kdtree = cKDTree(reference_points)
+        distances, idx_closest = kdtree.query(distanced_points)
     return idx_closest, distances
 
 
@@ -252,14 +257,12 @@ class FaceWithBackgroundModel(object):
             due to the fixed location of the face.
         '''
         meshdata = self._meshdata
-        rng = np.random.RandomState(seed=123456) # Determinism
         # TODO: a better way to recover the vertices of the face model (without surrounding)
         face_vertex_mask = meshdata.vertex_weights > 0.99
         face_indices, = np.nonzero(face_vertex_mask)
         notface_indices, = np.nonzero(~face_vertex_mask)
         # Thin out the vertices for reasonably fast closest distance computation
         # TODO: maybe a smarter closest point computation with spatial search structures like kd-tree.
-        face_indices = face_indices[rng.randint(0,len(face_indices), size = 5000)]
         del face_vertex_mask
         _, distances = find_closest_points(meshdata.vertices[face_indices,:], meshdata.vertices[notface_indices,:])
         return distances, notface_indices, meshdata.vertices.copy()
@@ -274,7 +277,7 @@ class FaceWithBackgroundModel(object):
         
         Using the rotation axis only a.t.m.
         """
-        range, decay_start_at = 1., 0.1
+        range, decay_start_at = 1., 0.01
         distances, notface_indices, vertices = self._dynamic_weight_parameters
 
         # It looked like in 300W-LP the range of the deformation is asymmetrical
@@ -285,7 +288,7 @@ class FaceWithBackgroundModel(object):
         side_axis_xy = np.asarray([-up_axis_xy[1], up_axis_xy[0]])
         proj = np.stack([side_axis_xy, up_axis_xy], axis=0)
         relative_xy = (proj @ (vertices[notface_indices][:,:2]).T).T
-        range_modulation = 0.5 + 2.*sigmoid(-yaw_sign*relative_xy[:,0]*2.)
+        range_modulation = 0.5 + 1.*sigmoid(-yaw_sign*relative_xy[:,0]*2.)
         range = range * range_modulation
 
         falloff = np.exp(np.maximum(distances - decay_start_at, 0.) * (-1./range))
@@ -464,19 +467,21 @@ class FaceAugmentationScene(object):
         assert headmesh.num_vertices == headmodel.vertexcount
         idx_mouth_lower, idx_mouth_upper = indices
         idx_mouth_upper_and_lower = np.concatenate([idx_mouth_lower, idx_mouth_upper])
-        idx_face_subset = np.random.randint(0, headmesh.num_vertices, size=1000) # For speed
-        num_bases = headmodel.scaled_bases.shape[0]
         def copy_basis(vertices_without_bases, vertices, basis, falloff=10000., decay_start_at=0.):
-            # Ignore y-direction since teeth are vertical and we want the same basis for upper and lower end
-            # Use the basis of the face mouth vertex which is closest
             idx_closest, distances = find_closest_points(vertices, vertices_without_bases)
             if 0:
                 import matplotlib.pyplot as pyplot
-                pyplot.scatter(vertices.T[0], vertices.T[2], c='r')
-                pyplot.scatter(vertices[idx_closest].T[0], vertices[idx_closest].T[2],c='b',marker='x')
-                pyplot.scatter(vertices_without_bases.T[0], vertices_without_bases.T[2],c='b')
+                fig, axes = pyplot.subplots(1,2)
+                axes[0].scatter(vertices.T[0], vertices.T[-1], c='r')
+                axes[0].scatter(vertices[idx_closest].T[0], vertices[idx_closest].T[-1],c='b',marker='x')
+                axes[0].scatter(vertices_without_bases.T[0], vertices_without_bases.T[-1],c='b')
+                axes[1].scatter(vertices.T[0], vertices.T[1], c='r')
+                axes[1].scatter(vertices[idx_closest].T[0], vertices[idx_closest].T[1],c='b',marker='x')
+                axes[1].scatter(vertices_without_bases.T[0], vertices_without_bases.T[1],c='b')
                 pyplot.show()
-            weight = np.exp(-np.maximum(distances - decay_start_at, 0.) / falloff)
+            normalized_distance = np.maximum(distances - decay_start_at, 0.) / falloff
+            #weight = np.exp(-normalized_distance)
+            weight = 0.5*(np.cos(np.minimum(1., normalized_distance)*np.pi)+1.)
             return basis[:,idx_closest,:]*weight[None,:,None]
         def combine_triangles(meshes):
             vertexcounts = [0] + [ m.num_vertices for m in meshes[:-1] ]
@@ -485,13 +490,14 @@ class FaceAugmentationScene(object):
                 (m.tris + o) for m,o in zip(meshes, offsets)
             ], axis=0)
             return new_tris
+        zeroy = np.asarray([[1.,0.,1.]])
         # This requires that the first N vertices of the headmesh correspond to the vertices in the prestine face model
-        teeth_lower_basis = copy_basis(teethmesh.vertices[:,[0,2]], headmesh.vertices[idx_mouth_lower][:,[0,2]], headmodel.scaled_bases[:,idx_mouth_lower,:])
-        teeth_upper_basis = copy_basis(teethmesh.vertices[:,[0,2]], headmesh.vertices[idx_mouth_upper][:,[0,2]], headmodel.scaled_bases[:,idx_mouth_upper,:])
+        teeth_lower_basis = copy_basis(teethmesh.vertices*zeroy, headmesh.vertices[idx_mouth_lower]*zeroy, headmodel.scaled_bases[:,idx_mouth_lower,:])
+        teeth_upper_basis = copy_basis(teethmesh.vertices*zeroy, headmesh.vertices[idx_mouth_upper]*zeroy, headmodel.scaled_bases[:,idx_mouth_upper,:])
         surrounding_basis = copy_basis(
             surrounding.vertices, 
-            headmesh.vertices[idx_face_subset], 
-            headmodel.scaled_bases[:,idx_face_subset,:], 0.01, 0.1)
+            headmesh.vertices[:], 
+            headmodel.scaled_bases[:,:,:], 0.3, 0.02)
         mouth_basis = copy_basis(
             mouth.vertices,
             headmesh.vertices[idx_mouth_upper_and_lower],
