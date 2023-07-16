@@ -21,7 +21,7 @@ deg2rad = np.pi/180.
 
 def infer_nice_depth_estimate_from_image(sample):
     depth_estimate = depthestimation.inference(sample['image'])
-    sigma = sample['scale']*0.05
+    sigma = sample['scale']*0.02
     ks = int(sigma*3) | 1
     blurred_depth = cv2.GaussianBlur(depth_estimate,(ks,ks),sigma)
     return blurred_depth, depth_estimate
@@ -96,4 +96,4 @@ def main(filename300wlp, outputfilename, max_num_frames):
 if __name__ == '__main__':
     filename = sys.argv[1]
     outputfilename = sys.argv[2]
-    main(filename, outputfilename, 20)
+    main(filename, outputfilename, 1<<32)

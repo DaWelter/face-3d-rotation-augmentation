@@ -1,4 +1,5 @@
 import numpy as np
+from scipy.spatial.transform import Rotation
 from . import graphics
 
 deg2rad = np.pi/180.
@@ -23,12 +24,14 @@ def get_p_bounds(h_samples, p):
     np.testing.assert_array_less(p_min, p_max)
     return p_min, p_max
 
-def sample_more_face_params(rot, rng):
+def sample_more_face_params(rot : Rotation, rng):
     h,p,b = (1./deg2rad)*graphics.get_hpb(rot)
+    #b,h,p = (1./deg2rad)*rot.as_euler('zyx')
     hsamples = get_h_samples(h,p,b, rng)
     psamples = clipped_normal(rng, *get_p_bounds(hsamples, p), 0.25)
     bsamples = clipped_normal(rng, *get_p_bounds(hsamples, b), 0.25)
     hpb = np.stack([hsamples,psamples,bsamples],axis=-1)
     hpb = np.concatenate([np.asarray([[h,p,b]]), hpb])
     hpb = deg2rad*np.clip(hpb, np.array([[-90.,-60.,-60]]), np.array([[90.,60.,60]]))
+    #return Rotation.from_euler('zyx', hpb)
     return graphics.make_rot(hpb)

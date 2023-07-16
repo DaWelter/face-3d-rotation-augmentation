@@ -42,6 +42,10 @@ def make_rot(hpb):
     return Rotation.from_euler('YXZ', hpb)
 
 
+def sigmoid(x):
+    return 1./(1. + np.exp(-x))
+
+
 def affine3d_chain(Ta, Tb):
     Ra, ta = Ta
     Rb, tb = Tb
@@ -197,7 +201,11 @@ class FaceWithBackgroundModel(object):
 
         h, w = image.shape[:2]
 
-        self._meshdata = self._meshdata._replace(vertex_weights = self._compute_weights_dynamically(self._meshdata, xy, scale, rot, 1., 0.1))
+        self._dynamic_weight_parameters = self._compute_distances_from_face_and_not_face_indices(self._meshdata)
+
+        self._unposed_vertices = self._meshdata.vertices
+
+        self._meshdata = self._compute_weights_dynamically(rot)
 
         # Extra border to generate black pixels outside of the original image region.
         # Because the the deformation will pull parts of the mesh into the view which
@@ -220,17 +228,38 @@ class FaceWithBackgroundModel(object):
 
         self._meshdata = self._meshdata._replace(vertices = vertices_according_to_pose)
 
-    def _compute_weights_dynamically(self, meshdata : Meshdata, xy, scale, rot, range, decay_start_at):
+
+    def _compute_distances_from_face_and_not_face_indices(self, meshdata : Meshdata):
+        rng = np.random.RandomState(seed=123456)
         face_vertex_mask = meshdata.vertex_weights > 0.99
-        not_face_mask = ~face_vertex_mask
         face_indices, = np.nonzero(face_vertex_mask)
-        face_indices = face_indices[np.random.randint(0,len(face_indices), size = 5000)]
+        notface_indices, = np.nonzero(~face_vertex_mask)
+        face_indices = face_indices[rng.randint(0,len(face_indices), size = 5000)]
         del face_vertex_mask
-        idx_closest, distances = find_closest_points(meshdata.vertices[face_indices,:], meshdata.vertices[not_face_mask,:])
+        _, distances = find_closest_points(meshdata.vertices[face_indices,:], meshdata.vertices[notface_indices,:])
+        return distances, notface_indices
+
+
+    def _compute_weights_dynamically(self, rot : Rotation):
+        range, decay_start_at = 1., 0.1
+        distances, notface_indices = self._dynamic_weight_parameters
+        vertices = self._unposed_vertices
+        if 1:
+            yaw_sign = np.sign(rot.apply([0.,0.,1.])[0])
+            up_axis_xy = rot.apply([0.,1.,0.])[:2]
+            up_axis_xy = up_axis_xy / np.linalg.norm(up_axis_xy)
+            side_axis_xy = np.asarray([-up_axis_xy[1], up_axis_xy[0]])
+            #side_axis_xy = rot.apply([1.,0.,0.])[:2]
+            #side_axis_xy = side_axis_xy / np.linalg.norm(side_axis_xy)
+            proj = np.stack([side_axis_xy, up_axis_xy], axis=0)
+            #proj = np.eye(2)
+            relative_xy = (proj @ (vertices[notface_indices][:,:2]).T).T
+            range_modulation = 0.5 + 2.*sigmoid(-yaw_sign*relative_xy[:,0]*2.)
+            range = range * range_modulation
         falloff = np.exp(np.maximum(distances - decay_start_at, 0.) * (-1./range))
-        weights = meshdata.vertex_weights.copy()
-        weights[not_face_mask] = falloff
-        return weights
+        weights = self._meshdata.vertex_weights.copy()
+        weights[notface_indices] = falloff
+        return self._meshdata._replace(vertex_weights = weights)
 
 
     def set_non_face_by_depth_estimate(self, inverse_depth):
@@ -266,23 +295,11 @@ class FaceWithBackgroundModel(object):
 
 
     def _compute_combined_transform(self, rotoffset):
-        # The new rotation shall take place about self._rotation_center
-        # 1. Transform center to world space: (center' = Tr @ center)
-        # 2. transform verts according to sample parameters: (v = (Tr @ shaping_result)
-        # 3. rotate verts by augmented rotation offset around center v' = (Tr2 @ (v-center)) + center
-        # 4. blend: v*f + (1-f)*shaping_result
-        # However, the rigid transformations can be rewritten as
-        # v' = (Tr2 @ ((Tr @ s) - center) + center
-        #    = Tr2' @ Tr' @ s
-        # With Tr2' like Tr2 with translation + center
-        # and  Tr' like Tr with translation - center
-        # Then Tr2 and Tr can be combined together
-        center = apply_s_rot_t(self._rotation_center, self._xy, self._scale, self._rot)
-        T1_t = np.asarray([self._xy[0], self._xy[1], 0.]) - center
-        T1_rot = self._rot
-        T2_t = center
-        T2_rot = rotoffset
-        R, t = affine3d_chain((T2_rot,T2_t),(T1_rot,T1_t))
+        c = self._scale*self._rotation_center
+        xyz = np.asarray([self._xy[0], self._xy[1], 0.])
+        offset_trafo = affine3d_chain((rotoffset, c), (Rotation.identity(),  -c))
+        sample_trafo = (self._rot, xyz)
+        (R,t) = affine3d_chain(sample_trafo, offset_trafo)
         return (R, t)
 
 
@@ -291,6 +308,7 @@ class FaceWithBackgroundModel(object):
             rotoffset = Rotation.identity()
         if shapeparam is None:
             shapeparam = self._shapeparam
+        self._meshdata = self._compute_weights_dynamically(self._rot*rotoffset)
         vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self._rotation_center, shapeparam)
         #vertices = self._apply_smoothing(vertices)
         tr = self._compute_combined_transform(rotoffset)
@@ -368,7 +386,7 @@ class FaceAugmentationScene(object):
 
         with open(filename, 'rb') as f:
             data = pickle.load(f)
-            print ("Loaded mesh data:", data.keys())
+            #print ("Loaded mesh data:", data.keys())
             md = _create_mesh(data['vertices'], data['tris'])
             md_teeth = _create_mesh(data['teeth_points'], data['teeth_tris'])
             md_surrounding = _create_mesh(data['surrounding_points'], data['surrounding_tris'])
