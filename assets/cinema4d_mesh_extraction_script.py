@@ -28,9 +28,10 @@ def main():
 
     points, tris = triangulate_and_get_geom(doc, obj)
     tags = getTagsByName(obj)
-    #weights = tags['faceweight'].GetAllHighlevelData()
     mask_mouth_lower = tags['mouth_lower'].GetBaseSelect().GetAll(len(points))
     mask_mouth_upper = tags['mouth_upper'].GetBaseSelect().GetAll(len(points))
+
+    #shadowmap = tags['shadowmap'].GetAllHighlevelData()
 
     obj = doc.SearchObject("teeth")
     teeth_points, teeth_tris = triangulate_and_get_geom(doc, obj)
@@ -40,19 +41,28 @@ def main():
     mouth_points, mouth_tris = triangulate_and_get_geom(doc, obj)
     mouth_shadowmap = tags['shadowmap'].GetAllHighlevelData()
 
+    obj = doc.SearchObject("surrounding")
+    surrounding_points, surrounding_tris = triangulate_and_get_geom(doc, obj)
+
     data = {
         'vertices' : points,
         'tris' : tris,
         #'weights' : weights,
+        #'shadowmap' : shadowmap,
         'mask_mouth_lower' : mask_mouth_lower,
         'mask_mouth_upper' : mask_mouth_upper,
+        #'mask_mouth_all' : mask_mouth_all,
         'teeth_points' : teeth_points,
         'teeth_tris' : teeth_tris,
+
         'mouth_points' : mouth_points,
         'mouth_tris' : mouth_tris,
         'mouth_shadowmap' : mouth_shadowmap,
+
+        'surrounding_points' : surrounding_points,
+        'surrounding_tris' : surrounding_tris,
     }
-    with open("D:\\full_bfm_mesh_with_bg_v6.pkl", "wb") as f:
+    with open("D:\\full_bfm_mesh_with_bg_v6.1.pkl", "wb") as f:
         cPickle.dump(data, f)
 
     print ("done!")

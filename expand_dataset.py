@@ -75,8 +75,7 @@ def main(filename300wlp, outputfilename, max_num_frames):
                     'scale' : sample['scale'],
                     'pt3d_68' : keypoints,
                     'roi' : roi,
-                    'shapeparam' : new_shapeparam,
-                    'name' : name
+                    'shapeparam' : new_shapeparam
                 }
 
                 if np.random.randint(0,100)==0:
@@ -89,7 +88,7 @@ def main(filename300wlp, outputfilename, max_num_frames):
                     pyplot.show(block=False)
                 pyplot.pause(0.001)
 
-                writer.write(new_sample)
+                writer.write(name, new_sample)
 
 
 

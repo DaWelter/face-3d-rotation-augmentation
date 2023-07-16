@@ -1,10 +1,6 @@
 from scipy.spatial.transform import Rotation
 import numpy as np
 import cv2
-from matplotlib import pyplot
-from matplotlib.widgets import Button
-from typing import Tuple, Union
-
 
 
 def draw_axis(img, rot, tdx=None, tdy=None, size = 100, brgt = 255, lw=3):

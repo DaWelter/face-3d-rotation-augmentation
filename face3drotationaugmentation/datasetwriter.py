@@ -4,7 +4,6 @@ from copy import copy
 import numpy as np
 from PIL import Image
 from collections import defaultdict
-from strenum import StrEnum
 import contextlib
 
 
@@ -19,6 +18,12 @@ class FieldCategory(object):
 
 
 class DatasetWriter(object):
+    '''For the extended pose dataset.
+
+    Writes poses, 68 3d landmarks, shape parameters and rois to an hdf5 file.
+    Images are stored in a directory which is given the same name as the file.
+    The "images" dataset in the h5 provides the image filename per sample.
+    '''
     def __init__(self, filename):
         self._filename = filename
         self._imagedir = os.path.splitext(filename)[0]
@@ -62,8 +67,7 @@ class DatasetWriter(object):
             ]:
                 ds.attrs['category'] = category
     
-    def _handle_image(self, sample):
-        name = sample['name']
+    def _handle_image(self, name, sample):
         os.makedirs(os.path.dirname(os.path.join(self._imagedir, name)), exist_ok=True)
         i = self._counts_by_name[name]
         imagefilename = f"{sample['name']}_{i:02d}.jpg"
@@ -72,11 +76,10 @@ class DatasetWriter(object):
             os.path.join(self._imagedir, imagefilename), quality=99)
         return imagefilename
 
-    def write(self, sample):
+    def write(self, name, sample):
         assert (set(sample.keys()) == set(['rot','xy','scale','image','name','pt3d_68', 'roi', 'shapeparam'])), f"Bad sample {list(sample.keys())}"
         sample = copy(sample)
-        sample['image'] = self._handle_image(sample)
-        del sample['name']
+        sample['image'] = self._handle_image(name, sample)
         sample['rot'] = sample['rot'].as_quat()
         for k, v in sample.items():
             self._small_data[k].append(v)

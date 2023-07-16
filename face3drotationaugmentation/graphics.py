@@ -22,7 +22,7 @@ IntArray = npt.NDArray[Union[np.int32,np.int64]]
 def get_hpb(rot : Rotation):
     '''Conversion to heading-pitch-bank.
     
-    First rotation is around z (bank/roll), then x (pitch), then y (yaw/heading)
+    In terms of extrinsic rotations, the first rotation is around z (bank/roll), then x (pitch), then y (yaw/heading)
     '''
     return rot.as_euler('YXZ')
 
@@ -37,7 +37,7 @@ def make_rot_by_axis_rotations(hpb):
 def make_rot(hpb):
     '''Conversion from heading-pitch-bank.
     
-    First rotation is around z (bank/roll), then x (pitch), then y (yaw/heading)
+    In terms of extrinsic rotations, the first rotation is around z (bank/roll), then x (pitch), then y (yaw/heading)
     '''
     return Rotation.from_euler('YXZ', hpb)
 
@@ -64,6 +64,7 @@ def apply_affine3d(tr, vertices):
 
 
 def apply_s_rot_t(vertices, xy, scale, rot):
+    "Scale, rotate and translate."
     vertices = rot.apply(vertices * scale)
     vertices[...,:2] += xy
     return vertices
@@ -74,14 +75,6 @@ def find_closest_points(reference_points, distanced_points):
     idx_closest = np.argmin(cross_distances, axis=1)
     distances, = np.take_along_axis(cross_distances, idx_closest[:,None], axis=1).T
     return idx_closest, distances
-
-
-def test_find_closest_points():
-    a, b = find_closest_points(np.asarray([[0.,10.,0.],[0.,0.,0.],[0.,0.,2.]]), np.asarray([[0.,1.,0.],[0.,0.,2.]]))
-    np.testing.assert_array_equal(a, [1, 2])
-    np.testing.assert_allclose(b, [1., 0.])
-
-test_find_closest_points()
 
 
 def interpolate_images(values, sample_points):
@@ -107,6 +100,7 @@ def interpolate_zero_channel_numpy_image(image, sample_points):
 
 
 def apply_blendshapes(vertices, blend_shape_vertices, shapeparam):
+    '''Adds the blend-shapes to the vertices using "shapeparam" as weights.'''
     return vertices + np.sum((blend_shape_vertices * shapeparam[:,None,None]), axis=0)
 
 
@@ -118,7 +112,7 @@ class Meshdata(NamedTuple):
     vertex_weights : FloatArray
     uvs : Optional[FloatArray]
     color : Optional[FloatArray]
-    deformbasis : Optional[FloatArray] # (Bases x Points x 3)
+    deformbasis : Optional[FloatArray] # (Basis Vectors x Points x 3)
 
     @property
     def num_vertices(self):
@@ -139,8 +133,9 @@ class Faceparams(NamedTuple):
 def create_pyrender_material(original_image, texture_border):
     '''
     Creates the material for the face mesh. Takes the original image of the data sample.
-    Before creating the texture a border / padding is added on all sides. This is needed
+    Before creating the texture, a border / padding is added on all sides. This is needed
     to pad the output image in black rather than with parts of the original image.
+    The UV coordinate generation will take this padding into account.
     '''
     h, w = original_image.shape[:2]
     tex = np.zeros((h+2*texture_border,w+2*texture_border,4), dtype=np.uint8)
@@ -155,11 +150,18 @@ def create_pyrender_material(original_image, texture_border):
             wrapS=pyrender.GLTF.CLAMP_TO_EDGE, 
             wrapT=pyrender.GLTF.CLAMP_TO_EDGE)
     )
-
+    # The only material that pyrender supports
     return pyrender.MetallicRoughnessMaterial(baseColorTexture=tex, doubleSided=False)
 
 
 def compute_initial_posed_vertices(meshdata : Meshdata, faceparams : Faceparams):
+    """Given the pose parameters and the normalized base mesh.
+
+    Applies scaling and translation. Then rotates, and blends the result with the unrotated
+    vertices using the meshes vertex_weights.
+
+    Returns posed vertices.
+    """
     vertices = apply_blendshapes(meshdata.vertices, meshdata.deformbasis, faceparams.shapeparam)
     unrotated_vertices = apply_s_rot_t(vertices, faceparams.xy, faceparams.scale, Rotation.identity())
     vertices = apply_s_rot_t(vertices, faceparams.xy, faceparams.scale, faceparams.rot)
@@ -169,6 +171,17 @@ def compute_initial_posed_vertices(meshdata : Meshdata, faceparams : Faceparams)
 
 
 def re_pose(meshdata : Meshdata, original_faceparams : Faceparams, rot_offset, rot_offset_center, new_shapeparam):
+    """Handles the desired offset rotation from the baseline.
+    
+    Conceptually, the frontal face is first rotated according around "rot_offset_center" by "rot_offset". Also the new
+    shape parameters are applied, overriding the baseline. Then the face is rotated by the original rotation. (i.e. the given
+    offset is multiplied from the right.)
+
+    In reality this function expects the fully posed vertices of the baseline pose!
+
+    Returns posed vertices.
+    """
+
     # First reverse the original pose transform, ignoring scale
     vertices = meshdata.vertices.copy()
     vertices[:,:2] -= original_faceparams.xy
@@ -186,36 +199,37 @@ def re_pose(meshdata : Meshdata, original_faceparams : Faceparams, rot_offset, r
 
 
 class FaceWithBackgroundModel(object):
+    '''Generates the mesh with augmented face rotations.'''
+
     texture_border = 50 # pixels
+    # Center for the augmented rotation. It is specified in the local BFM frame.
+    rotation_center = np.array([0., 0.5, 0.1])
 
     def __init__(self, meshdata : Meshdata, xy, scale, rot, shapeparam, image):
-        self._keypoints = bfm.BFMModel().keypoints # TODO: restructure code to remove this
+        self._keypoint_idx = bfm.BFMModel().keypoints # TODO: restructure code to remove this
         self._meshdata = meshdata
         self._rot = rot
         self._xy = xy
         self._scale = scale
         self._shapeparam = shapeparam
         self._faceparams = Faceparams(xy, scale, rot, shapeparam)
-        # Center for the augmented rotation. It is specified in the local BFM frame.
-        self._rotation_center = np.array([0., 0.5, 0.1])
 
         h, w = image.shape[:2]
 
-        self._dynamic_weight_parameters = self._compute_distances_from_face_and_not_face_indices(self._meshdata)
-
-        self._unposed_vertices = self._meshdata.vertices
+        # Parameters to help compute the deformation weights for 
+        # blending the rotated bits with the stationary surrounding.
+        self._dynamic_weight_parameters = self._dynamic_weight_parameters()
 
         self._meshdata = self._compute_weights_dynamically(rot)
-
-        # Extra border to generate black pixels outside of the original image region.
-        # Because the the deformation will pull parts of the mesh into the view which
-        # were not part of the original image.
         
         vertices_according_to_pose = compute_initial_posed_vertices(self._meshdata, self._faceparams)
 
-        #self._laplacian = self._compute_laplacian(vertices_according_to_pose)
-        
-        #vertices_according_to_pose = self._apply_smoothing(vertices_according_to_pose)
+        if 0:
+            # Looks good now without it
+            self._laplacian = self._compute_laplacian(vertices_according_to_pose)
+            vertices_according_to_pose = self._apply_smoothing(vertices_according_to_pose)
+
+        self._meshdata = self._meshdata._replace(vertices = vertices_according_to_pose)
 
         # By default, without texture border, the range from [0,w] is mapped to [0,1]
         # With border ...
@@ -226,36 +240,54 @@ class FaceWithBackgroundModel(object):
 
         self.background_plane_z_coord = np.average(vertices_according_to_pose[self._meshdata.vertex_weights < 0.01,2])
 
-        self._meshdata = self._meshdata._replace(vertices = vertices_according_to_pose)
 
+    def _dynamic_weight_parameters(self):
+        '''Computes currently ...
 
-    def _compute_distances_from_face_and_not_face_indices(self, meshdata : Meshdata):
-        rng = np.random.RandomState(seed=123456)
+        Return:
+            * Distance to face model for each surrounding ("notface") vertex
+            * Indices of notface vertices
+            * Copy of all mesh vertices. With the function called in the right place these will be
+            the unposed unscaled model where the face is in the center. These can be used more easily
+            due to the fixed location of the face.
+        '''
+        meshdata = self._meshdata
+        rng = np.random.RandomState(seed=123456) # Determinism
+        # TODO: a better way to recover the vertices of the face model (without surrounding)
         face_vertex_mask = meshdata.vertex_weights > 0.99
         face_indices, = np.nonzero(face_vertex_mask)
         notface_indices, = np.nonzero(~face_vertex_mask)
+        # Thin out the vertices for reasonably fast closest distance computation
+        # TODO: maybe a smarter closest point computation with spatial search structures like kd-tree.
         face_indices = face_indices[rng.randint(0,len(face_indices), size = 5000)]
         del face_vertex_mask
         _, distances = find_closest_points(meshdata.vertices[face_indices,:], meshdata.vertices[notface_indices,:])
-        return distances, notface_indices
+        return distances, notface_indices, meshdata.vertices.copy()
 
 
     def _compute_weights_dynamically(self, rot : Rotation):
+        """ Computes weights depending on the desired pose.
+
+        The vertex weights of the face are all 1 to apply the full rotation there.
+        From the face the weight falls off more or less slowly into the vertices
+        of the surrounding.
+        
+        Using the rotation axis only a.t.m.
+        """
         range, decay_start_at = 1., 0.1
-        distances, notface_indices = self._dynamic_weight_parameters
-        vertices = self._unposed_vertices
-        if 1:
-            yaw_sign = np.sign(rot.apply([0.,0.,1.])[0])
-            up_axis_xy = rot.apply([0.,1.,0.])[:2]
-            up_axis_xy = up_axis_xy / np.linalg.norm(up_axis_xy)
-            side_axis_xy = np.asarray([-up_axis_xy[1], up_axis_xy[0]])
-            #side_axis_xy = rot.apply([1.,0.,0.])[:2]
-            #side_axis_xy = side_axis_xy / np.linalg.norm(side_axis_xy)
-            proj = np.stack([side_axis_xy, up_axis_xy], axis=0)
-            #proj = np.eye(2)
-            relative_xy = (proj @ (vertices[notface_indices][:,:2]).T).T
-            range_modulation = 0.5 + 2.*sigmoid(-yaw_sign*relative_xy[:,0]*2.)
-            range = range * range_modulation
+        distances, notface_indices, vertices = self._dynamic_weight_parameters
+
+        # It looked like in 300W-LP the range of the deformation is asymmetrical
+        # between left and right, depending on the yaw. This is tried here too.
+        yaw_sign = np.sign(rot.apply([0.,0.,1.])[0])
+        up_axis_xy = rot.apply([0.,1.,0.])[:2]
+        up_axis_xy = up_axis_xy / np.linalg.norm(up_axis_xy)
+        side_axis_xy = np.asarray([-up_axis_xy[1], up_axis_xy[0]])
+        proj = np.stack([side_axis_xy, up_axis_xy], axis=0)
+        relative_xy = (proj @ (vertices[notface_indices][:,:2]).T).T
+        range_modulation = 0.5 + 2.*sigmoid(-yaw_sign*relative_xy[:,0]*2.)
+        range = range * range_modulation
+
         falloff = np.exp(np.maximum(distances - decay_start_at, 0.) * (-1./range))
         weights = self._meshdata.vertex_weights.copy()
         weights[notface_indices] = falloff
@@ -263,8 +295,15 @@ class FaceWithBackgroundModel(object):
 
 
     def set_non_face_by_depth_estimate(self, inverse_depth):
+        """ Set the surroundings depth from a depth estimation."""
         vertices = self._meshdata.vertices
-        keypoints = vertices[self._keypoints,:]
+        # The provided estimate should scale linearly and with a 1:1 ratio w.r.t.
+        # with the size of the items in the visual image. However it comes with an
+        # unknown offset.
+        # The attempt here is to calculate this offset out by matching the depth at
+        # the face landmarks. There the depth of the mesh is known to be good and so
+        # the offset can be calculated and applied to all over the depth estimate.
+        keypoints = vertices[self._keypoint_idx,:]
         depth = -inverse_depth
         depth_estimate_zs = interpolate_zero_channel_numpy_image(depth, keypoints[:,:2])
         calibration_offset = np.average(keypoints[:,2] - depth_estimate_zs)
@@ -272,6 +311,9 @@ class FaceWithBackgroundModel(object):
         depth = np.clip(depth, -1.5*self._faceparams.scale, 1.5*self._faceparams.scale)
         depth_estimate_zs += calibration_offset
         z_calibration_curves = (keypoints[:,2], depth_estimate_zs)
+        # Finally the corrected depth estimate can be applied to the vertices of the
+        # surrounding. Smooth blending is applied using the vertex weights in order
+        # to maintain the original face vertices.
         zs = interpolate_zero_channel_numpy_image(depth, vertices[:,:2])
         vertices = vertices.copy()
         f = np.power(self._meshdata.vertex_weights, 2.)
@@ -295,7 +337,9 @@ class FaceWithBackgroundModel(object):
 
 
     def _compute_combined_transform(self, rotoffset):
-        c = self._scale*self._rotation_center
+        '''Takes care of computing the new face location mostly.'''
+        # The output rotation is just the concatenation off the baseline rotation and the offset.
+        c = self._scale*self.rotation_center
         xyz = np.asarray([self._xy[0], self._xy[1], 0.])
         offset_trafo = affine3d_chain((rotoffset, c), (Rotation.identity(),  -c))
         sample_trafo = (self._rot, xyz)
@@ -309,8 +353,10 @@ class FaceWithBackgroundModel(object):
         if shapeparam is None:
             shapeparam = self._shapeparam
         self._meshdata = self._compute_weights_dynamically(self._rot*rotoffset)
-        vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self._rotation_center, shapeparam)
-        #vertices = self._apply_smoothing(vertices)
+        vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self.rotation_center, shapeparam)
+        if 0:
+            # Looks good without it
+            vertices = self._apply_smoothing(vertices)
         tr = self._compute_combined_transform(rotoffset)
         return (Meshdata(
             vertices,
@@ -324,6 +370,8 @@ class FaceWithBackgroundModel(object):
 
 
 class FaceAugmentationScene(object):
+    '''Handles the pyrender parts mostly.'''
+
     def __init__(self, sample):
         xy = sample['xy']
         scale = sample['scale']
@@ -340,6 +388,13 @@ class FaceAugmentationScene(object):
 
     @contextlib.contextmanager
     def __call__(self, rotoffset = None, shapeparam = None):
+        '''Temporarily assembles the scene and ...
+        
+        Returns
+            The scene
+            The rotation and translation of new face
+            The 68 3d landmarks
+        '''
         meshdata, tr = self.face_model(rotoffset, shapeparam)
         prim = pyrender.Primitive(
             positions = meshdata.vertices, 
@@ -359,6 +414,8 @@ class FaceAugmentationScene(object):
 
     @staticmethod
     def add_camera(scene, image_shape, scale, background_plane_z_coord):
+        # Perspective camera with very long focal length to fake an orthographic camera.
+        # The proper orthographic camera didn't work.
         h, w, _ = image_shape
         zdistance = 10000
         fov = 2.*np.arctan(0.5*(h)/(zdistance + background_plane_z_coord))
@@ -398,6 +455,12 @@ class FaceAugmentationScene(object):
 
     @staticmethod
     def join_meshes(headmesh : Meshdata, teethmesh : Meshdata, surrounding : Meshdata, mouth : Meshdata, indices : Tuple[npt.NDArray[np.integer],...], headmodel : bfm.BFMModel) -> Meshdata:
+        '''Assembles bits to a large mesh.
+
+        Initially only the face vertices have a deformation basis. This function copies from this basis to appropriate parks like the teeth so they
+        move with the face model, for example. The surrounding is padded mostly with zeros otoh. Then there are other things to consider 
+        like colors and normals ...
+        '''
         assert headmesh.num_vertices == headmodel.vertexcount
         idx_mouth_lower, idx_mouth_upper = indices
         idx_mouth_upper_and_lower = np.concatenate([idx_mouth_lower, idx_mouth_upper])
@@ -494,4 +557,11 @@ def test_euler_angle_functions():
     numpy.testing.assert_array_less((rots.inv() * ref_rots).magnitude(), 1.e-6)
     numpy.testing.assert_array_less((rots.inv() * make_rot_by_axis_rotations(hpb)).magnitude(), 1.e-6)
 
+def test_find_closest_points():
+    a, b = find_closest_points(np.asarray([[0.,10.,0.],[0.,0.,0.],[0.,0.,2.]]), np.asarray([[0.,1.,0.],[0.,0.,2.]]))
+    np.testing.assert_array_equal(a, [1, 2])
+    np.testing.assert_allclose(b, [1., 0.])
+
+# Maybe I should do more of these ...
 test_euler_angle_functions()
+test_find_closest_points()
