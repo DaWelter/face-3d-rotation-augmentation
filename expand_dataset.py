@@ -99,4 +99,6 @@ if __name__ == '__main__':
     parser.add_argument("outputfilename", type=str, help="hdf5 file")
     parser.add_argument("-n", help="subset of n samples", type=int, default=1<<32)
     args = parser.parse_args()
+    if not (args.outputfilename.lower().endswith('.h5') or args.outputfilename.lower().endswith('.hdf5')):
+            raise ValueError("outputfilename must have hdf5 filename extension")
     main(args._300wlp, args.outputfilename, args.n)
