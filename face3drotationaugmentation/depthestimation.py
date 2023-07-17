@@ -11,8 +11,8 @@ def init():
     global transform
     global device
     #model_type = "DPT_Large"     # MiDaS v3 - Large     (highest accuracy, slowest inference speed)
-    #model_type = "DPT_Hybrid"   # MiDaS v3 - Hybrid    (medium accuracy, medium inference speed)
-    model_type = "MiDaS_small"  # MiDaS v2.1 - Small   (lowest accuracy, highest inference speed)
+    model_type = "DPT_Hybrid"   # MiDaS v3 - Hybrid    (medium accuracy, medium inference speed)
+    #model_type = "MiDaS_small"  # MiDaS v2.1 - Small   (lowest accuracy, highest inference speed)
 
     # This repo looks legit. I put in the current commit hash. So not much could go wrong here.
     repository = "intel-isl/MiDaS:1645b7e1675301fdfac03640738fe5a6531e17d6"

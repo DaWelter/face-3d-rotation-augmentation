@@ -313,7 +313,7 @@ class FaceWithBackgroundModel(object):
         depth = depth + calibration_offset
         depth = np.clip(depth, -1.5*self._faceparams.scale, 1.5*self._faceparams.scale)
         depth_estimate_zs += calibration_offset
-        z_calibration_curves = (keypoints[:,2], depth_estimate_zs)
+        z_calibration_curves = (keypoints[:,0], keypoints[:,2], depth_estimate_zs)
         # Finally the corrected depth estimate can be applied to the vertices of the
         # surrounding. Smooth blending is applied using the vertex weights in order
         # to maintain the original face vertices.
@@ -350,13 +350,14 @@ class FaceWithBackgroundModel(object):
         return (R, t)
 
 
-    def __call__(self, rotoffset = None, shapeparam = None) -> Tuple[Meshdata,Tuple[Rotation,np.ndarray]]:
-        if rotoffset is None:
-            rotoffset = Rotation.identity()
-        if shapeparam is None:
-            shapeparam = self._shapeparam
-        self._meshdata = self._compute_weights_dynamically(self._rot*rotoffset)
-        vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self.rotation_center, shapeparam)
+    def __call__(self, new_rot = None, new_shapeparam = None) -> Tuple[Meshdata,Tuple[Rotation,np.ndarray]]:
+        if new_rot is None:
+            new_rot = self._rot
+        if new_shapeparam is None:
+            new_shapeparam = self._shapeparam
+        self._meshdata = self._compute_weights_dynamically(new_rot)
+        rotoffset = self._rot.inv() * new_rot
+        vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self.rotation_center, new_shapeparam)
         if 0:
             # Looks good without it
             vertices = self._apply_smoothing(vertices)
@@ -390,7 +391,7 @@ class FaceAugmentationScene(object):
 
 
     @contextlib.contextmanager
-    def __call__(self, rotoffset = None, shapeparam = None):
+    def __call__(self, new_rot = None, new_shapeparam = None):
         '''Temporarily assembles the scene and ...
         
         Returns
@@ -398,7 +399,7 @@ class FaceAugmentationScene(object):
             The rotation and translation of new face
             The 68 3d landmarks
         '''
-        meshdata, tr = self.face_model(rotoffset, shapeparam)
+        meshdata, tr = self.face_model(new_rot, new_shapeparam)
         prim = pyrender.Primitive(
             positions = meshdata.vertices, 
             indices=meshdata.tris, 

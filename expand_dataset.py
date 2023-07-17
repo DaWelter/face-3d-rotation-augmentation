@@ -60,9 +60,7 @@ def main(filename300wlp, outputfilename, max_num_frames):
             renderer = pyrender.OffscreenRenderer(viewport_width=w, viewport_height=h)
 
             for more_rot, new_shapeparam in zip(more_rots, new_shapeparams):
-                rotoffset = sample['rot'].inv()*more_rot
-
-                with augscene(rotoffset, new_shapeparam) as items:
+                with augscene(more_rot, new_shapeparam) as items:
                     scene, (R,t), keypoints = items
                     color, _ = renderer.render(scene)
                     color = np.ascontiguousarray(color)
