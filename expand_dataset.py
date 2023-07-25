@@ -28,10 +28,10 @@ def infer_nice_depth_estimate_from_image(sample):
     return blurred_depth, depth_estimate
 
 
-def main(filename300wlp, outputfilename, max_num_frames):
+def main(filename300wlp, outputfilename, max_num_frames, enable_vis):
     depthestimation.init()
 
-    rng = np.random.RandomState()
+    rng = np.random.RandomState(seed=1234567)
 
     fig, ax, imgplot = None, None, None
 
@@ -49,6 +49,7 @@ def main(filename300wlp, outputfilename, max_num_frames):
 
             new_shapeparams = [ sample['shapeparam'] for _ in more_rots ]
             # TODO: Sampling an new face shape requires to transfer the texture to the teeth
+            #       And fixing some problems with the face deformation maybe
             #new_shapeparams = all_shapeparams[rng.randint(0,len(all_shapeparams),size=(num_additional_frames,))]
 
             blurred_depth, _ = infer_nice_depth_estimate_from_image(sample)
@@ -77,7 +78,7 @@ def main(filename300wlp, outputfilename, max_num_frames):
                     'shapeparam' : new_shapeparam
                 }
 
-                if np.random.randint(0,100)==0:
+                if enable_vis and np.random.randint(0,100)==0:
                     if fig is None:
                         fig, ax = pyplot.subplots(1,1)
                         imgplot = ax.imshow(np.zeros((5,5,3), dtype=np.uint8))
@@ -99,4 +100,4 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if not (args.outputfilename.lower().endswith('.h5') or args.outputfilename.lower().endswith('.hdf5')):
             raise ValueError("outputfilename must have hdf5 filename extension")
-    main(args._300wlp, args.outputfilename, args.n)
+    main(args._300wlp, args.outputfilename, args.n, enable_vis=True)

@@ -87,7 +87,7 @@ def discover_samples(zf):
     isInDataSubsets = lambda s: s.split(os.path.sep)[1] in names
     filenames = [
         f.filename for f in zf.filelist if 
-        (f.external_attr==0x20 and splitext(f.filename)[1]=='.mat' and isInDataSubsets(f.filename)) ]
+        (splitext(f.filename)[1]=='.mat' and isInDataSubsets(f.filename)) ]
     return filenames
 
 
