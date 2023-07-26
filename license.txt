@@ -1,0 +1,52 @@
+MIT License
+===========
+
+Copyright (c) 2023 Michael Welter
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+
+Reproduction of licenses of reused IP
+=====================================
+
+Basel Face Model
+----------------
+
+The Basel Face Model is only for academic use. For commercial use, you need to apply for the commercial license, some refs are below:
+[1] https://faces.dmi.unibas.ch/bfm/?nav=1-0&id=basel_face_model
+[2] https://faces.dmi.unibas.ch/bfm/bfm2019.html
+[3] P. Paysan et al. (2009) "A 3D Face Model for Pose and Illumination Invariant Face Recognition"
+
+The modified model (no neck, no ears) was taken from https://github.com/cleardusk/3DDFA_V2 and further modified.
+
+3DDFA V2 - the BFM code
+-----------------------
+(https://github.com/cleardusk/3DDFA_V2)
+
+MIT License
+
+Copyright (c) 2017 Max deGroot, Ellis Brown
+Copyright (c) 2019 Zisian Wong, Shifeng Zhang
+Copyright (c) 2020 Jianzhu Guo, in Center for Biometrics and Security Research (CBSR)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

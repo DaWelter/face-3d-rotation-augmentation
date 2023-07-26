@@ -135,6 +135,10 @@ class Dataset300WLP(object):
         self._matfiles = remove_artificially_rotated_faces(matfiles) if only_originals else matfiles
         self._bfm = bfm.BFMModel()
 
+    @property
+    def filenames(self):
+        return [(os.path.splitext(matfile)[0]).split('/')[-1] for matfile in self._matfiles ]
+
     def __getitem__(self, i):
         matfile = self._matfiles[i]
 
