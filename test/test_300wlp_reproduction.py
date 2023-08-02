@@ -15,10 +15,21 @@ def assert_similar_images(reference : Path, output : Path):
         img = np.asarray(Image.open(output / name))
         np.testing.assert_allclose(img, ref, atol=5)
 
+
+def assert_sequence_starts_ok(sequence_starts, n):
+    assert len(sequence_starts) == 3
+    assert sequence_starts[0] == 0
+    assert sequence_starts[-1] == n
+    assert 15 < sequence_starts[1] < 25
+
+
 def assert_similar_labels(reference : Path, output : Path):
     with h5py.File(str(reference)+'.h5','r') as refh5, h5py.File(str(output)+'.h5', 'r') as outh5:
-        assert set(refh5.keys()) == set(outh5.keys())
-        assert all(isinstance(item, h5py.Dataset) for item in outh5.values())
+        outkeys = set(outh5.keys())
+        outkeys.remove('sequence_starts') # For now because the old reference doesn't have it.
+        assert set(refh5.keys()) == outkeys
+        assert all(isinstance(item, h5py.Dataset) for item in refh5.values())
+        assert_sequence_starts_ok(outh5['sequence_starts'][...], len(refh5['images']))
         for k, ref in refh5.items():
             out = outh5[k]
             assert ref.dtype == out.dtype
@@ -26,7 +37,7 @@ def assert_similar_labels(reference : Path, output : Path):
                 np.testing.assert_allclose(out[...], ref[...])
             else:
                 np.testing.assert_array_equal(out[...], ref[...])
-
+ 
 
 def assert_similar(reference : Path, output : Path):
     assert_similar_labels(reference, output)
@@ -35,7 +46,7 @@ def assert_similar(reference : Path, output : Path):
 
 def test_300wlp_reproduction(tmpdir):
     tmpdir = Path(tmpdir)
-    main(Path(__file__).parent/'data/300wlp_miniset.zip', tmpdir/'output.h5', 1<<32, enable_vis=False)
+    main(Path(__file__).parent/'data/300wlp_miniset.zip', tmpdir/'output.h5', 1<<32, enable_vis=False, angle_step=5.)
     assert_similar(Path(__file__).parent/'data/300wlp_reference_output', tmpdir/'output')
 
 

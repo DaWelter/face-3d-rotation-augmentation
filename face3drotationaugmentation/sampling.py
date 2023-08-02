@@ -45,14 +45,18 @@ def get_b_bounds(h_samples, b):
     return b_min, b_max
 
 
-def sample_more_face_params(rot : Rotation, rng : np.random.RandomState):
+def sample_more_face_params(rot : Rotation, rng : np.random.RandomState, angle_step):
+    '''
+    Args:
+        angle_step : In degrees
+    '''
     h,p,b = (1./deg2rad)*graphics.get_hpb(rot)
     
     #hp_distribution = lambda a,b: clipped_normal(rng, a, b, 0.25)
     #hp_distribution = lambda a,b: rng.uniform(a, b)
     hp_distribution = lambda a,b: rng.normal(loc=0.5*(b+a), scale=0.5*(b-a))
 
-    hsamples = get_h_samples(h,p,b, rng, stepsize=5.)
+    hsamples = get_h_samples(h,p,b, rng, stepsize=angle_step)
     psamples = hp_distribution(*get_p_bounds(hsamples, p))
     bsamples = hp_distribution(*get_b_bounds(hsamples, b))
     hpb = np.stack([hsamples,psamples,bsamples],axis=-1)

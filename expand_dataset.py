@@ -28,7 +28,7 @@ def infer_nice_depth_estimate_from_image(sample):
     return blurred_depth, depth_estimate
 
 
-def main(filename300wlp, outputfilename, max_num_frames, enable_vis):
+def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step):
     depthestimation.init()
 
     rng = np.random.RandomState(seed=1234567)
@@ -45,7 +45,7 @@ def main(filename300wlp, outputfilename, max_num_frames, enable_vis):
             assert name.endswith("_0")
             name = name[:-2]
             
-            more_rots = sampling.sample_more_face_params(sample['rot'], rng)
+            more_rots = sampling.sample_more_face_params(sample['rot'], rng, angle_step)
 
             new_shapeparams = [ sample['shapeparam'] for _ in more_rots ]
             # TODO: Sampling an new face shape requires to transfer the texture to the teeth
@@ -97,7 +97,8 @@ if __name__ == '__main__':
     parser.add_argument("_300wlp", type=str, help="300 wlp zip file")
     parser.add_argument("outputfilename", type=str, help="hdf5 file")
     parser.add_argument("-n", help="subset of n samples", type=int, default=1<<32)
+    parser.add_argument("--yaw-step", type=float, default=5., help="the increment of yaw angle per sample")
     args = parser.parse_args()
     if not (args.outputfilename.lower().endswith('.h5') or args.outputfilename.lower().endswith('.hdf5')):
             raise ValueError("outputfilename must have hdf5 filename extension")
-    main(args._300wlp, args.outputfilename, args.n, enable_vis=True)
+    main(args._300wlp, args.outputfilename, args.n, enable_vis=True, angle_step=args.yaw_step)

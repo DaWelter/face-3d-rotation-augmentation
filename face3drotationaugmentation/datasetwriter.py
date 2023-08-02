@@ -29,20 +29,23 @@ class DatasetWriter(object):
         self._imagedir = os.path.splitext(filename)[0]
         self._small_data = defaultdict(list)
         self._counts_by_name = defaultdict(int)
+        self._names = dict()
 
     def close(self):
         if not self._counts_by_name:
             return
 
         dat = self._small_data
+        # Convert to numpy so we can use fancy indexing
         for k, v in dat.items():
             if not isinstance(next(iter(v)), str):
                 dat[k] = np.stack(v)
 
-        N = len(next(iter(self._small_data.values())))
-        assert all(len(x)==N for x in self._small_data.values())
+        N = len(next(iter(dat.values())))
+        assert all(len(x)==N for x in dat.values())
         cs = min(N, 1024)
 
+        sequence_starts = np.cumsum([0] + list(self._counts_by_name.values()))
         xys = np.concatenate([dat['xy'], dat['scale'][:,None]], axis=-1)
         quats = dat['rot'] # Already converted in .write()
         image = dat['image']
@@ -57,7 +60,8 @@ class DatasetWriter(object):
             ds_roi = f.create_dataset('rois', (N,4), chunks=(cs,4), dtype='f4', data = roi)
             ds_img = f.create_dataset('images', (N,), chunks=(cs,), data = image)
             ds_img.attrs['storage'] = 'image_filename'
-            ds_shapeparams = f.create_dataset('shapeparams', (N,50), chunks=(cs,50), dtype='f4', data = shapeparam)
+            f.create_dataset('shapeparams', (N,50), chunks=(cs,50), dtype='f4', data = shapeparam)
+            f.create_dataset('sequence_starts', dtype='i4', data = sequence_starts)
             for ds, category in [
                 (ds_quats,FieldCategory.quat),
                 (ds_coords,FieldCategory.xys),
@@ -66,12 +70,22 @@ class DatasetWriter(object):
                 (ds_img,FieldCategory.image),
             ]:
                 ds.attrs['category'] = category
-    
+
+    def _handle_counting(self, name):
+        num = self._counts_by_name[name]
+        self._counts_by_name[name] += 1
+        # Check if not repeating earlier name
+        if self._names:
+            k, _ = self._names.popitem()
+            assert not name in self._names
+            self._names[k] = None
+            self._names[name] = None
+        return num
+
     def _handle_image(self, name, sample):
         os.makedirs(os.path.dirname(os.path.join(self._imagedir, name)), exist_ok=True)
-        i = self._counts_by_name[name]
+        i = self._handle_counting(name)
         imagefilename = f"{name}_{i:02d}.jpg"
-        self._counts_by_name[name] += 1
         Image.fromarray(sample['image']).save(
             os.path.join(self._imagedir, imagefilename), quality=99)
         return imagefilename
