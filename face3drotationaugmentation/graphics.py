@@ -211,7 +211,7 @@ class FaceWithBackgroundModel(object):
     rotation_center = np.array([0., 0.5, 0.1])
 
     def __init__(self, meshdata : Meshdata, xy, scale, rot, shapeparam, image):
-        self._keypoint_idx = bfm.BFMModel().keypoints # TODO: restructure code to remove this
+        self._keypoint_idx = bfm.BFMModel.load().keypoints # TODO: restructure code to remove this
         self._meshdata = meshdata
         self._rot = rot
         self._xy = xy
@@ -380,6 +380,7 @@ class FaceAugmentationScene(object):
         xy = sample['xy']
         scale = sample['scale']
         shapeparam = sample['shapeparam']
+        shapeparam = np.concatenate([shapeparam, [0.,0.]])
         image = sample['image']
         rot = sample['rot']
         meshdata, keypoint_indices = FaceAugmentationScene.load_assets()
@@ -391,7 +392,7 @@ class FaceAugmentationScene(object):
 
 
     @contextlib.contextmanager
-    def __call__(self, new_rot = None, new_shapeparam = None):
+    def __call__(self, new_rot = None, new_shapeparam = None, eyes_closing = None):
         '''Temporarily assembles the scene and ...
         
         Returns
@@ -399,6 +400,9 @@ class FaceAugmentationScene(object):
             The rotation and translation of new face
             The 68 3d landmarks
         '''
+        assert (new_shapeparam is None) == (eyes_closing is None)
+        if new_shapeparam is not None:
+            new_shapeparam = np.concatenate([new_shapeparam, eyes_closing])
         meshdata, tr = self.face_model(new_rot, new_shapeparam)
         prim = pyrender.Primitive(
             positions = meshdata.vertices, 
@@ -435,11 +439,15 @@ class FaceAugmentationScene(object):
 
     @staticmethod
     def load_mesh_data(filename):
-        def _create_mesh(vertices, tris, shadowmap = None):
-            tris = np.asarray(tris)
+        def _create_points(vertices):
             vertices = np.asarray(vertices)
             vertices *= 0.01  # Vertices were changed during import in 3d software
-            vertices[:,1] *= -1 
+            vertices[:,1] *= -1
+            return vertices
+
+        def _create_mesh(vertices, tris, shadowmap = None):
+            tris = np.asarray(tris)
+            vertices = _create_points(vertices)
             # Dummy is good enough for unlit scene
             normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(vertices),3))
             color = np.tile(np.asarray(shadowmap)[:,None], (1,3)) if shadowmap is not None else None
@@ -447,7 +455,6 @@ class FaceAugmentationScene(object):
 
         with open(filename, 'rb') as f:
             data = pickle.load(f)
-            #print ("Loaded mesh data:", data.keys())
             md = _create_mesh(data['vertices'], data['tris'])
             md_teeth = _create_mesh(data['teeth_points'], data['teeth_tris'])
             md_surrounding = _create_mesh(data['surrounding_points'], data['surrounding_tris'])
@@ -455,7 +462,9 @@ class FaceAugmentationScene(object):
             md_surrounding = md_surrounding._replace(tris = np.ascontiguousarray(md_surrounding.tris[:,[2,1,0]]))
             idx_mouth_lower, = np.nonzero(data['mask_mouth_lower'])
             idx_mouth_upper, = np.nonzero(data['mask_mouth_upper'])
-            return md, md_teeth, md_surrounding, md_mouth, (idx_mouth_lower, idx_mouth_upper)
+            shape_left_eye_close = _create_points(data['ev_left_eye'])
+            shape_right_eye_close = _create_points(data['ev_right_eye'])
+            return md, md_teeth, md_surrounding, md_mouth, (idx_mouth_lower, idx_mouth_upper), (shape_left_eye_close,shape_right_eye_close)
 
     @staticmethod
     def join_meshes(headmesh : Meshdata, teethmesh : Meshdata, surrounding : Meshdata, mouth : Meshdata, indices : Tuple[npt.NDArray[np.integer],...], headmodel : bfm.BFMModel) -> Meshdata:
@@ -541,18 +550,20 @@ class FaceAugmentationScene(object):
         #new_colors = new_weights[:,None]*np.asarray([[1.,0.,0.]])
         return Meshdata(new_vertices, new_tris, new_normals, new_weights, None, new_colors, new_basis)
 
+    @staticmethod
+    def extend_bfm_expression_basis(model : bfm.BFMModel, additional_deform_shapes):
+        deform_deltas = [ (x-model.scaled_vertices) for x in additional_deform_shapes ]
+        return model._replace(scaled_bases = np.concatenate([model.scaled_bases, deform_deltas],axis=0))
 
     @staticmethod
     @functools.cache
     def load_assets():
         this_file_directory = os.path.dirname(__file__)
-        headmesh, teethmesh, surrounding, mouth, indices = \
-            FaceAugmentationScene.load_mesh_data(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v6.1.pkl"))
-        headmodel = bfm.BFMModel(40, 10)
-        if teethmesh is not None:
-            meshdata = FaceAugmentationScene.join_meshes(headmesh, teethmesh, surrounding, mouth, indices, headmodel)
-        else:
-            assert ("Add padded basis vectors to return")
+        headmesh, teethmesh, surrounding, mouth, indices, additional_deform_shapes = \
+            FaceAugmentationScene.load_mesh_data(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v6.2.pkl"))
+        headmodel = bfm.BFMModel.load()
+        headmodel =FaceAugmentationScene.extend_bfm_expression_basis(headmodel, additional_deform_shapes)
+        meshdata = FaceAugmentationScene.join_meshes(headmesh, teethmesh, surrounding, mouth, indices, headmodel)
         return meshdata, headmodel.keypoints
 
 

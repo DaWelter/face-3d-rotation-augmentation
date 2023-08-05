@@ -1,4 +1,6 @@
+from typing import NamedTuple
 import numpy as np
+import numpy.typing as npt
 import pickle
 from os.path import join, dirname
 
@@ -15,7 +17,7 @@ def _to_ctype(arr):
 _current_folder = dirname(__file__)
 
 
-class BFMModel(object):
+class IntermediateBFMModel(object):
     def __init__(self, shape_dim=40, exp_dim=10):
         bfm = _load(join(_current_folder,'bfm_noneck_v3.pkl'))
         self.u = bfm.get('u').astype(np.float32)  # fix bug
@@ -60,3 +62,24 @@ class BFMModel(object):
         tri = self.tri
         tri = tri[...,[2,1,0]]
         return np.ascontiguousarray(tri)
+    
+
+class BFMModel(NamedTuple):
+    tri : npt.NDArray[np.int32]
+    scaled_vertices : npt.NDArray[np.float32]
+    scaled_bases : npt.NDArray[np.float32]
+    keypoints : npt.NDArray[np.int64]
+    
+    @property
+    def vertexcount(self):
+        return len(self.scaled_vertices)
+    
+    @staticmethod
+    def load() -> 'BFMModel':
+        m = IntermediateBFMModel()
+        return BFMModel(
+            m.scaled_tri,
+            m.scaled_vertices,
+            m.scaled_bases,
+            m.keypoints
+        )

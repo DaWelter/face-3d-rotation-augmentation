@@ -133,7 +133,7 @@ class Dataset300WLP(object):
         self._zf = zf = zipfile.ZipFile(filename)
         matfiles = discover_samples(zf)
         self._matfiles = remove_artificially_rotated_faces(matfiles) if only_originals else matfiles
-        self._bfm = bfm.BFMModel()
+        self._bfm = bfm.BFMModel.load()
 
     @property
     def filenames(self):

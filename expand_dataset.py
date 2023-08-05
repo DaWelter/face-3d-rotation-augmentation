@@ -2,6 +2,7 @@ from typing import List
 import os
 from matplotlib import pyplot
 import numpy as np
+import numpy.typing as npt
 import tqdm
 import cv2
 from contextlib import closing
@@ -28,7 +29,15 @@ def infer_nice_depth_estimate_from_image(sample):
     return blurred_depth, depth_estimate
 
 
-def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step):
+def sample_shapeparams(rng : np.random.RandomState, original_params : npt.NDArray[np.float64], n : int, prob_closed_eyes : float):
+    new_shapeparams = np.broadcast_to(original_params[None,], (n,)+original_params.shape)
+    eyes_closed = rng.binomial(1, p=prob_closed_eyes, size=(n,1))
+    eyes_closing_amount = eyes_closed*rng.beta(5, 1., size=(n,1))
+    eyes_closing_amount = np.repeat(eyes_closing_amount,2,axis=-1)
+    return new_shapeparams, eyes_closing_amount
+
+
+def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step, prob_closed_eyes):
     depthestimation.init()
 
     rng = np.random.RandomState(seed=1234567)
@@ -47,7 +56,9 @@ def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step)
             
             more_rots = sampling.sample_more_face_params(sample['rot'], rng, angle_step)
 
-            new_shapeparams = [ sample['shapeparam'] for _ in more_rots ]
+            new_shapeparams, eyes_closing_amounts = sample_shapeparams(rng, sample['shapeparam'], len(more_rots), prob_closed_eyes)
+
+
             # TODO: Sampling an new face shape requires to transfer the texture to the teeth
             #       And fixing some problems with the face deformation maybe
             #new_shapeparams = all_shapeparams[rng.randint(0,len(all_shapeparams),size=(num_additional_frames,))]
@@ -60,8 +71,8 @@ def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step)
             h, w, _ = sample['image'].shape
             renderer = pyrender.OffscreenRenderer(viewport_width=w, viewport_height=h)
 
-            for more_rot, new_shapeparam in zip(more_rots, new_shapeparams):
-                with augscene(more_rot, new_shapeparam) as items:
+            for more_rot, new_shapeparam, eyes_closing_amount in zip(more_rots, new_shapeparams, eyes_closing_amounts):
+                with augscene(more_rot, new_shapeparam, eyes_closing_amount) as items:
                     scene, (R,t), keypoints = items
                     color, _ = renderer.render(scene)
                     color = np.ascontiguousarray(color)
@@ -98,7 +109,8 @@ if __name__ == '__main__':
     parser.add_argument("outputfilename", type=str, help="hdf5 file")
     parser.add_argument("-n", help="subset of n samples", type=int, default=1<<32)
     parser.add_argument("--yaw-step", type=float, default=5., help="the increment of yaw angle per sample")
+    parser.add_argument("--prob-closed-eyes", type=float, default=0., help="probability for closing eyes (between 0 and 1)")
     args = parser.parse_args()
     if not (args.outputfilename.lower().endswith('.h5') or args.outputfilename.lower().endswith('.hdf5')):
             raise ValueError("outputfilename must have hdf5 filename extension")
-    main(args._300wlp, args.outputfilename, args.n, enable_vis=True, angle_step=args.yaw_step)
+    main(args._300wlp, args.outputfilename, args.n, enable_vis=True, angle_step=args.yaw_step, prob_closed_eyes=args.prob_closed_eyes)
