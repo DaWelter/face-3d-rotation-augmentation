@@ -52,6 +52,18 @@ vs. original
 
 ![original](doc/300wlp_rot_distribution.png)
 
+Extra augmentation
+------------------
+
+*Closed eyes*. Looks quite good in general and helps make more stable predictions. 
+Probability to generate closed eyes must be cranked up quite hight to about 0.5.
+
+![](doc/closed-eyes-aug.jpg)
+
+*Spotlight*. Adds a light shining from the side with shadow casting. Looks bad and is riddled with artifacts from shadow mapping. Doesn't seem to help. :-< Be advised to generate only a small fraction of samples with this aug.
+
+![](doc/spotlight-aug.jpg)
+
 
 Todo
 ----
