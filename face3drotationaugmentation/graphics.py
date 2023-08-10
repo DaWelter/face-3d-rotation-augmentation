@@ -109,6 +109,12 @@ def apply_blendshapes(vertices, blend_shape_vertices, shapeparam):
     return vertices + np.sum((blend_shape_vertices * shapeparam[:,None,None]), axis=0)
 
 
+def estimate_vertex_normals(vertices, tris):
+    face_normals = trimesh.Trimesh(vertices, tris).face_normals
+    new_normals = trimesh.geometry.mean_vertex_normals(len(vertices), tris, face_normals)
+    assert new_normals.shape == vertices.shape, f"{new_normals.shape} vs {vertices.shape}"
+    return new_normals
+
 
 class Meshdata(NamedTuple):
     vertices : FloatArray
@@ -133,30 +139,6 @@ class Faceparams(NamedTuple):
     scale : float
     rot : Rotation
     shapeparam : Optional[FloatArray]
-
-
-def create_pyrender_material(original_image, texture_border):
-    '''
-    Creates the material for the face mesh. Takes the original image of the data sample.
-    Before creating the texture, a border / padding is added on all sides. This is needed
-    to pad the output image in black rather than with parts of the original image.
-    The UV coordinate generation will take this padding into account.
-    '''
-    h, w = original_image.shape[:2]
-    tex = np.zeros((h+2*texture_border,w+2*texture_border,4), dtype=np.uint8)
-    tex[texture_border:-texture_border, texture_border:-texture_border,:3] = original_image
-    tex[:,:,3] = 255 # Alpha channel
-
-    tex = pyrender.Texture(
-        source = tex,
-        source_channels = 'RGBA', # RGB doesn't work
-        data_format = pyrender.texture.GL_UNSIGNED_BYTE,
-        sampler = pyrender.Sampler(
-            wrapS=pyrender.GLTF.CLAMP_TO_EDGE, 
-            wrapT=pyrender.GLTF.CLAMP_TO_EDGE)
-    )
-    # The only material that pyrender supports
-    return pyrender.MetallicRoughnessMaterial(baseColorTexture=tex, doubleSided=False)
 
 
 def compute_initial_posed_vertices(meshdata : Meshdata, faceparams : Faceparams):
@@ -277,7 +259,7 @@ class FaceWithBackgroundModel(object):
         
         Using the rotation axis only a.t.m.
         """
-        range, decay_start_at = 1., 0.01
+        range, decay_start_at = 1., 0.1
         distances, notface_indices, vertices = self._dynamic_weight_parameters
 
         # It looked like in 300W-LP the range of the deformation is asymmetrical
@@ -358,6 +340,7 @@ class FaceWithBackgroundModel(object):
         self._meshdata = self._compute_weights_dynamically(new_rot)
         rotoffset = self._rot.inv() * new_rot
         vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self.rotation_center, new_shapeparam)
+        normals =estimate_vertex_normals(vertices, self._meshdata.tris)
         if 0:
             # Looks good without it
             vertices = self._apply_smoothing(vertices)
@@ -365,12 +348,91 @@ class FaceWithBackgroundModel(object):
         return (Meshdata(
             vertices,
             self._meshdata.tris,
-            self._meshdata.normals,
+            normals, #self._meshdata.normals,
             None,
             self._uvs,
             self._meshdata.color,
             None
         ), tr)
+
+
+def create_pyrender_material(original_image, texture_border):
+    '''
+    Creates the material for the face mesh. Takes the original image of the data sample.
+    Before creating the texture, a border / padding is added on all sides. This is needed
+    to pad the output image in black rather than with parts of the original image.
+    The UV coordinate generation will take this padding into account.
+    '''
+    h, w = original_image.shape[:2]
+    tex = np.zeros((h+2*texture_border,w+2*texture_border,4), dtype=np.uint8)
+    tex[texture_border:-texture_border, texture_border:-texture_border,:3] = original_image
+    tex[:,:,3] = 255 # Alpha channel
+
+    tex = pyrender.Texture(
+        source = tex,
+        source_channels = 'RGBA', # RGB doesn't work
+        data_format = pyrender.texture.GL_UNSIGNED_BYTE,
+        sampler = pyrender.Sampler(
+            wrapS=pyrender.GLTF.CLAMP_TO_EDGE, 
+            wrapT=pyrender.GLTF.CLAMP_TO_EDGE)
+    )
+    # The only material that pyrender supports
+    return pyrender.MetallicRoughnessMaterial(
+        baseColorTexture=tex, 
+        doubleSided=False,
+        #metallicFactor=1.,
+        #roughnessFactor=1.,
+        emissiveFactor=0.,
+        emissiveTexture=tex
+    )
+
+
+def _rotvec_between(a, b):
+    a = a/np.linalg.norm(a)
+    b = b/np.linalg.norm(b)
+    axis_x_sin = np.cross(a,b)
+    cos_ = np.dot(a,b)
+    if cos_ < -1.+1.e-6:
+        return np.array([0.,np.pi,0.])
+    if cos_ < 1.-1.e-6:
+        return axis_x_sin/np.linalg.norm(axis_x_sin)*np.arccos(cos_)
+    return np.zeros((3,))
+
+
+class SpotlightLookingAtPoint(object):
+    def __init__(self, distance, look_at_point, roi_radius):
+        self._distance = distance
+        self._look_at_point_x, self._look_at_point_y = look_at_point
+        # Keep intensity at target point constant, independent of distance
+        intensity = 20.*np.square(distance)
+        innerAngle = np.arctan2(roi_radius,distance)
+        outerAngle = np.arctan2(2.*roi_radius,distance)
+
+        self._light = pyrender.SpotLight(color=[1.0, 1.0, 1.0], intensity=intensity, range=1., innerConeAngle=innerAngle, outerConeAngle=outerAngle)
+        self._node = pyrender.Node(light = self._light, matrix=self._direction_vector_to_pose_matrix(np.array([0.,0.,1.])))
+
+        # PointLight seems broken. Get only black image.
+        #self.light = pyrender.PointLight(color=[1.0, 1.0, 1.0], intensity=10000000.)
+        # Set custom shadow texture: won't be written into / not working
+        #self.light.shadow_texture = pyrender.Texture(width=4096, height=4096, source_channels='D', data_format=pyrender.light.GL_FLOAT)
+
+
+    @property
+    def node(self):
+        return self._node
+
+
+    def _direction_vector_to_pose_matrix(self, v):
+        assert v[2] >= 0., "No backlighting?"
+        v = v * (self._distance / np.linalg.norm(v))
+        pose = np.eye(4)
+        pose[:3,:3] = Rotation.from_rotvec(_rotvec_between(np.asarray([0., 0., -1.]),v)).as_matrix()
+        pose[:3,3] = -v + np.array([self._look_at_point_x,self._look_at_point_y,0.])
+        return pose
+
+
+    def update(self, direction_vec):
+        self._node.matrix = self._direction_vector_to_pose_matrix(direction_vec)
 
 
 class FaceAugmentationScene(object):
@@ -385,14 +447,18 @@ class FaceAugmentationScene(object):
         rot = sample['rot']
         meshdata, keypoint_indices = FaceAugmentationScene.load_assets()
         self.face_model = face_model = FaceWithBackgroundModel(meshdata, xy, scale, rot, shapeparam, image)
-        self.scene = scene = pyrender.Scene(ambient_light=[1., 1., 1.], bg_color=[0.0, 0.0, 0.0])
+        self.scene = scene = pyrender.Scene(
+            ambient_light=[0., 0., 0.], #[1., 1., 1.], 
+            bg_color=[0.0, 0.0, 0.0]
+        )
         self.material = create_pyrender_material(image, FaceWithBackgroundModel.texture_border)
         self.keypoint_indices = keypoint_indices
         FaceAugmentationScene.add_camera(scene, image.shape, scale, face_model.background_plane_z_coord)
+        self.light = SpotlightLookingAtPoint(distance=scale*10, look_at_point=xy, roi_radius=scale)
 
 
     @contextlib.contextmanager
-    def __call__(self, new_rot = None, new_shapeparam = None, eyes_closing = None):
+    def __call__(self, new_rot = None, new_shapeparam = None, eyes_closing = None, light_direction_vec = None):
         '''Temporarily assembles the scene and ...
         
         Returns
@@ -413,11 +479,19 @@ class FaceAugmentationScene(object):
             color_0 = meshdata.color)
         mesh = pyrender.Mesh(primitives = [prim])
         face_node = self.scene.add(mesh)
+        if light_direction_vec is not None:
+            self.light.update(light_direction_vec)
+            self.scene.add_node(self.light.node)
+        else:
+            self.material.emissiveFactor = 1.
         try:
             keypoints = meshdata.vertices[self.keypoint_indices]
             yield (self.scene, tr, keypoints)
         finally:
             self.scene.remove_node(face_node)
+            if light_direction_vec is not None:
+                self.scene.remove_node(self.light.node)
+            self.material.emissiveFactor = 0.
 
 
     @staticmethod
@@ -540,14 +614,13 @@ class FaceAugmentationScene(object):
             np.ones((teethmesh.num_vertices,3)),
             np.ones((surrounding.num_vertices,3))
         ], axis=0)
-        new_normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(new_vertices),3))
+        new_normals = estimate_vertex_normals(new_vertices, new_tris)
         new_weights = np.concatenate([
             np.ones((headmesh.num_vertices,)),
             np.ones((mouth.num_vertices,)),
             np.ones((teethmesh.num_vertices*2,)),
             np.zeros((surrounding.num_vertices,))
         ], axis=0)
-        #new_colors = new_weights[:,None]*np.asarray([[1.,0.,0.]])
         return Meshdata(new_vertices, new_tris, new_normals, new_weights, None, new_colors, new_basis)
 
     @staticmethod
@@ -560,7 +633,7 @@ class FaceAugmentationScene(object):
     def load_assets():
         this_file_directory = os.path.dirname(__file__)
         headmesh, teethmesh, surrounding, mouth, indices, additional_deform_shapes = \
-            FaceAugmentationScene.load_mesh_data(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v6.2.pkl"))
+            FaceAugmentationScene.load_mesh_data(os.path.join(this_file_directory,"full_bfm_mesh_with_bg_v7.pkl"))
         headmodel = bfm.BFMModel.load()
         headmodel =FaceAugmentationScene.extend_bfm_expression_basis(headmodel, additional_deform_shapes)
         meshdata = FaceAugmentationScene.join_meshes(headmesh, teethmesh, surrounding, mouth, indices, headmodel)

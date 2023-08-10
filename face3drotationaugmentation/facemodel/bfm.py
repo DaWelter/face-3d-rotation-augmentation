@@ -27,7 +27,15 @@ class IntermediateBFMModel(object):
         self.vertexcount = self.u.shape[0]//3
         
         self.tri = _to_ctype(self.tri.T).astype(np.int32)
+        
         self.keypoints = bfm.get('keypoints').astype(np.int64)[::3]//3
+        # Fix up landmarks of the eye because the old positions don't work any more
+        # with the deformations I do for the closed eyes.
+        left_eye_new = [ 1959, 3887, 5048, 6216, 3513, 4674 ]
+        right_eye_new = [ 9956, 11223, 12384, 14327, 11495, 12656]
+        self.keypoints[[36,37,38,39,41,40]] = left_eye_new
+        self.keypoints[[42,43,44,45,47,46]] = right_eye_new
+
         w = np.concatenate((self.w_shp, self.w_exp), axis=1)
         self.w_norm = np.linalg.norm(w, axis=0)
     

@@ -2,6 +2,7 @@ from pathlib import Path
 from PIL import Image
 import numpy as np
 import h5py
+from collections import defaultdict
 
 from expand_dataset import main
 
@@ -25,18 +26,16 @@ def assert_sequence_starts_ok(sequence_starts, n):
 
 def assert_similar_labels(reference : Path, output : Path):
     with h5py.File(str(reference)+'.h5','r') as refh5, h5py.File(str(output)+'.h5', 'r') as outh5:
-        outkeys = set(outh5.keys())
-        outkeys.remove('sequence_starts') # For now because the old reference doesn't have it.
-        assert set(refh5.keys()) == outkeys
+        assert set(refh5.keys()) == set(outh5.keys())
         assert all(isinstance(item, h5py.Dataset) for item in refh5.values())
         assert_sequence_starts_ok(outh5['sequence_starts'][...], len(refh5['images']))
         for k, ref in refh5.items():
             out = outh5[k]
             assert ref.dtype == out.dtype
             if ref.dtype in (np.float32, np.float64):
-                np.testing.assert_allclose(out[...], ref[...])
+                np.testing.assert_allclose(out[...], ref[...], err_msg=f"Mismatch at dataset {k}")
             else:
-                np.testing.assert_array_equal(out[...], ref[...])
+                np.testing.assert_array_equal(out[...], ref[...], err_msg=f"Mismatch at dataset {k}")
  
 
 def assert_similar(reference : Path, output : Path):
@@ -46,7 +45,7 @@ def assert_similar(reference : Path, output : Path):
 
 def test_300wlp_reproduction(tmpdir):
     tmpdir = Path(tmpdir)
-    main(Path(__file__).parent/'data/300wlp_miniset.zip', tmpdir/'output.h5', 1<<32, enable_vis=False, angle_step=5.)
+    main(Path(__file__).parent/'data/300wlp_miniset.zip', tmpdir/'output.h5', 1<<32, enable_vis=False, angle_step=5., prob_closed_eyes=0, prob_spotlight=0)
     assert_similar(Path(__file__).parent/'data/300wlp_reference_output', tmpdir/'output')
 
 

@@ -29,15 +29,7 @@ def infer_nice_depth_estimate_from_image(sample):
     return blurred_depth, depth_estimate
 
 
-def sample_shapeparams(rng : np.random.RandomState, original_params : npt.NDArray[np.float64], n : int, prob_closed_eyes : float):
-    new_shapeparams = np.broadcast_to(original_params[None,], (n,)+original_params.shape)
-    eyes_closed = rng.binomial(1, p=prob_closed_eyes, size=(n,1))
-    eyes_closing_amount = eyes_closed*rng.beta(5, 1., size=(n,1))
-    eyes_closing_amount = np.repeat(eyes_closing_amount,2,axis=-1)
-    return new_shapeparams, eyes_closing_amount
-
-
-def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step, prob_closed_eyes):
+def main(filename300wlp : str, outputfilename : str, max_num_frames : int, enable_vis : bool, angle_step: float, prob_closed_eyes : float, prob_spotlight : float):
     depthestimation.init()
 
     rng = np.random.RandomState(seed=1234567)
@@ -47,8 +39,6 @@ def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step,
     with closing(dataset300wlp.Dataset300WLP(filename300wlp)) as ds300wlp, dataset_writer(outputfilename) as writer:
         num_frames = min(max_num_frames, len(ds300wlp))
 
-        #all_shapeparams = np.asarray([ s['shapeparam'] for _,s in tqdm.tqdm(zip(range(num_frames),ds300wlp), total=num_frames) ])
-
         for _, sample in tqdm.tqdm(zip(range(num_frames), ds300wlp), total=num_frames):
             name = sample['name']
             assert name.endswith("_0")
@@ -56,12 +46,8 @@ def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step,
             
             more_rots = sampling.sample_more_face_params(sample['rot'], rng, angle_step)
 
-            new_shapeparams, eyes_closing_amounts = sample_shapeparams(rng, sample['shapeparam'], len(more_rots), prob_closed_eyes)
-
-
-            # TODO: Sampling an new face shape requires to transfer the texture to the teeth
-            #       And fixing some problems with the face deformation maybe
-            #new_shapeparams = all_shapeparams[rng.randint(0,len(all_shapeparams),size=(num_additional_frames,))]
+            new_shapeparams, eyes_closing_amounts = sampling.sample_shapeparams(rng, sample['shapeparam'], len(more_rots), prob_closed_eyes)
+            new_lightparams = [ sampling.sample_light(rng, r, prob_spotlight) for r in more_rots ]
 
             blurred_depth, _ = infer_nice_depth_estimate_from_image(sample)
 
@@ -71,10 +57,15 @@ def main(filename300wlp, outputfilename, max_num_frames, enable_vis, angle_step,
             h, w, _ = sample['image'].shape
             renderer = pyrender.OffscreenRenderer(viewport_width=w, viewport_height=h)
 
-            for more_rot, new_shapeparam, eyes_closing_amount in zip(more_rots, new_shapeparams, eyes_closing_amounts):
-                with augscene(more_rot, new_shapeparam, eyes_closing_amount) as items:
+            for more_rot, new_shapeparam, eyes_closing_amount, light_param in zip(more_rots, new_shapeparams, eyes_closing_amounts, new_lightparams):
+
+                flags = pyrender.RenderFlags.NONE
+                if new_lightparams is not None:
+                    flags = pyrender.RenderFlags.SHADOWS_ALL
+
+                with augscene(more_rot, new_shapeparam, eyes_closing_amount, light_param) as items:
                     scene, (R,t), keypoints = items
-                    color, _ = renderer.render(scene)
+                    color, _ = renderer.render(scene, flags=flags)
                     color = np.ascontiguousarray(color)
 
                 roi = dataset300wlp.head_bbox_from_keypoints(keypoints)
@@ -110,7 +101,8 @@ if __name__ == '__main__':
     parser.add_argument("-n", help="subset of n samples", type=int, default=1<<32)
     parser.add_argument("--yaw-step", type=float, default=5., help="the increment of yaw angle per sample")
     parser.add_argument("--prob-closed-eyes", type=float, default=0., help="probability for closing eyes (between 0 and 1)")
+    parser.add_argument("--prob-spotlight", type=float, default=0., help="Probability to add spotlight shining from the side (between 0 and 1)")
     args = parser.parse_args()
     if not (args.outputfilename.lower().endswith('.h5') or args.outputfilename.lower().endswith('.hdf5')):
             raise ValueError("outputfilename must have hdf5 filename extension")
-    main(args._300wlp, args.outputfilename, args.n, enable_vis=True, angle_step=args.yaw_step, prob_closed_eyes=args.prob_closed_eyes)
+    main(args._300wlp, args.outputfilename, args.n, enable_vis=True, angle_step=args.yaw_step, prob_closed_eyes=args.prob_closed_eyes, prob_spotlight=args.prob_spotlight)

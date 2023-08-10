@@ -1,6 +1,8 @@
 import numpy as np
+import numpy.typing as npt
 from scipy.spatial.transform import Rotation
 from . import graphics
+from typing import Optional
 
 deg2rad = np.pi/180.
 
@@ -64,3 +66,31 @@ def sample_more_face_params(rot : Rotation, rng : np.random.RandomState, angle_s
     hpb = deg2rad*np.clip(hpb, np.array([[-90.,-60.,-60]]), np.array([[90.,60.,60]]))
     
     return graphics.make_rot(hpb)
+
+
+def sample_shapeparams(rng : np.random.RandomState, original_params : npt.NDArray[np.float64], n : int, prob_closed_eyes : float):
+    new_shapeparams = np.broadcast_to(original_params[None,], (n,)+original_params.shape)
+    if prob_closed_eyes > 0:
+        eyes_closed = rng.binomial(1, p=prob_closed_eyes, size=(n,1))
+        eyes_closing_amount = eyes_closed*rng.beta(5, 1., size=(n,1))
+        eyes_closing_amount = np.repeat(eyes_closing_amount,2,axis=-1)
+    else:
+        eyes_closing_amount = np.zeros((n,2))
+    return new_shapeparams, eyes_closing_amount
+
+
+def sample_light(rng : np.random.RandomState, rot : Rotation, prob_spotlight : float) -> Optional[npt.NDArray]:
+    assert 0 <= prob_spotlight <= 1.
+    h,p,b = (1./deg2rad)*graphics.get_hpb(rot)
+    p = prob_spotlight
+    if p <= 0:
+        return None
+    #prob_on_modulation = np.clip(1. - np.abs(h) / 90., 0.1, 1.)
+    #p = prob_on_max * prob_on_modulation
+    if rng.binomial(1, p):
+        z = 1
+        y = rng.uniform(-1., 1.)
+        x = np.sign(h)*10.
+        return np.array([x,y,z])
+    else:
+        return None
