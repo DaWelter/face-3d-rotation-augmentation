@@ -65,6 +65,17 @@ Probability to generate closed eyes must be cranked up quite hight to about 0.5.
 ![](doc/spotlight-aug.jpg)
 
 
+The 3d model
+------------
+
+Here is a view of the wireframe
+
+![](doc/wireframe.png)
+
+It's based on the Basel Face Model, facial-region-only variant, from 3DDFA_V2 [2]. I added a smooth transition to a flat background plane. Then added the mouth interior,
+blend-shapes for closing eyes, as well as "teeth". I used Cinema4D to do it. The scene file is in the assets folder.
+
+
 Todo
 ----
 

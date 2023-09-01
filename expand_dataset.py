@@ -1,40 +1,20 @@
-from typing import List
-import os
 from matplotlib import pyplot
 import numpy as np
-import numpy.typing as npt
 import tqdm
-import cv2
 from contextlib import closing
-import sys
 import argparse
 
-import pyrender
-
 import face3drotationaugmentation.dataset300wlp as dataset300wlp
-import face3drotationaugmentation.vis as vis
-import face3drotationaugmentation.graphics as graphics
-import face3drotationaugmentation.sampling as sampling
-from face3drotationaugmentation import depthestimation
+from face3drotationaugmentation.generate import augment_sample, SampleVisualizerWindow
 from face3drotationaugmentation.datasetwriter import dataset_writer
 
 deg2rad = np.pi/180.
 
 
-def infer_nice_depth_estimate_from_image(sample):
-    depth_estimate = depthestimation.inference(sample['image'])
-    sigma = sample['scale']*0.02
-    ks = int(sigma*3) | 1
-    blurred_depth = cv2.GaussianBlur(depth_estimate,(ks,ks),sigma)
-    return blurred_depth, depth_estimate
-
-
 def main(filename300wlp : str, outputfilename : str, max_num_frames : int, enable_vis : bool, angle_step: float, prob_closed_eyes : float, prob_spotlight : float):
-    depthestimation.init()
-
     rng = np.random.RandomState(seed=1234567)
 
-    fig, ax, imgplot = None, None, None
+    visualizer = SampleVisualizerWindow()
 
     with closing(dataset300wlp.Dataset300WLP(filename300wlp)) as ds300wlp, dataset_writer(outputfilename) as writer:
         num_frames = min(max_num_frames, len(ds300wlp))
@@ -44,53 +24,17 @@ def main(filename300wlp : str, outputfilename : str, max_num_frames : int, enabl
             assert name.endswith("_0")
             name = name[:-2]
             
-            more_rots = sampling.sample_more_face_params(sample['rot'], rng, angle_step)
+            generated_samples = list(augment_sample(angle_step, prob_closed_eyes, prob_spotlight, rng, sample))
 
-            new_shapeparams, eyes_closing_amounts = sampling.sample_shapeparams(rng, sample['shapeparam'], len(more_rots), prob_closed_eyes)
-            new_lightparams = [ sampling.sample_light(rng, r, prob_spotlight) for r in more_rots ]
+            if enable_vis and np.random.randint(0,10)==0:
+                visualizer.show(next(iter(generated_samples)))
+            pyplot.pause(0.001)
 
-            blurred_depth, _ = infer_nice_depth_estimate_from_image(sample)
-
-            augscene = graphics.FaceAugmentationScene(sample)
-            augscene.face_model.set_non_face_by_depth_estimate(blurred_depth)
-
-            h, w, _ = sample['image'].shape
-            renderer = pyrender.OffscreenRenderer(viewport_width=w, viewport_height=h)
-
-            for more_rot, new_shapeparam, eyes_closing_amount, light_param in zip(more_rots, new_shapeparams, eyes_closing_amounts, new_lightparams):
-
-                flags = pyrender.RenderFlags.NONE
-                if new_lightparams is not None:
-                    flags = pyrender.RenderFlags.SHADOWS_ALL
-
-                with augscene(more_rot, new_shapeparam, eyes_closing_amount, light_param) as items:
-                    scene, (R,t), keypoints = items
-                    color, _ = renderer.render(scene, flags=flags)
-                    color = np.ascontiguousarray(color)
-
-                roi = dataset300wlp.head_bbox_from_keypoints(keypoints)
-
-                new_sample = {
-                    'image' : color,
-                    'rot' : R,
-                    'xy' : t[:2],
-                    'scale' : sample['scale'],
-                    'pt3d_68' : keypoints,
-                    'roi' : roi,
-                    'shapeparam' : new_shapeparam
-                }
-
-                if enable_vis and np.random.randint(0,100)==0:
-                    if fig is None:
-                        fig, ax = pyplot.subplots(1,1)
-                        imgplot = ax.imshow(np.zeros((5,5,3), dtype=np.uint8))
-                    img = color.copy()
-                    vis.draw_pose(img, new_sample, 255, 2)
-                    imgplot.set_data(img)
-                    pyplot.show(block=False)
-                pyplot.pause(0.001)
-
+            for new_sample in generated_samples:
                 writer.write(name, new_sample)
+
+
+
 
 
 
