@@ -71,7 +71,7 @@ def main():
         'ev_left_eye' : ev_left_eye,
         'ev_right_eye' : ev_right_eye
     }
-    with open("D:\\full_bfm_mesh_with_bg_v6.2.pkl", "wb") as f:
+    with open("D:\\full_bfm_mesh_with_bg_v7.pkl", "wb") as f:
         cPickle.dump(data, f)
 
     print ("done!")
