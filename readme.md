@@ -6,10 +6,6 @@ face pose datasets for the creation of the 300W-LP dataset. (http://www.cbsr.ia.
 
 **It only covers the synthesis. Not the initial fitting.** Therefore a dataset with ground truth is required. Currently the original 300W-LP dataset.
 
-With it my networks achieve comparable performance as with the original 300W-LP.
-Around 3.8 to 4.0 deg mean abs euler angle error.
-
-
 Outputs
 -------
 
@@ -64,6 +60,31 @@ Probability to generate closed eyes must be cranked up quite hight to about 0.5.
 
 ![](doc/spotlight-aug.jpg)
 
+3d Rotation Estimation Application Study
+----------------------------------------
+
+I trained a 3d rotation estimation CNN on the new dataset and compared with the results from training on the original 300 wlp. The evaluation is done on 1970 samples from the AFLW 3d 2000 dataset. The remaining 30 samples are excluded due to extreme poses.
+
+Dataset creation command: `python ./expand_dataset.py --yaw-step 5.0 --prob-closed-eyes 0.5 --prob-spotlight 0.001 $ORIGINAL_DATA_DIR/300W-LP.zip $DATA_DIR/300wlp_repro_extended.h5`
+
+Mean absolute angle errors in degrees:
+
+| Dataset  | Yaw  | Pitch | Roll | Average |
+|----------|------|-------|------|---------|
+| 300 wlp  | 5.24 | 3.19  | 3.51 |  3.98   |
+| Mine     | **4.77** | **3.05**  | **3.09** |  **3.64**   |
+
+This is 2022 SOTA level, and hence quite good considering the simplicity of the model which was essentially a Mobilenet 1 with quaternion regression.
+
+Furthermore, to see the magnitude of systematic errors when closing ones eyes, I recorded a video of a 
+test subject, marked the sections with eyes closed and recorded outputs from the trained estimators. 
+Qualitatively we can see from the following plot that the new dataset leads to arguably lesser deflections
+in the marked sections.
+
+![](doc/ypr-curves.png)
+
+Yellow sections: Eyes closed. Red: Yaw. Green: Pitch. Blue: Roll. Saturated colors: My dataset. Light colors: 300wlp.
+Especially by the end of the sequence, where the head is yawed, the improvements in stability are clearly visible.
 
 The 3d model
 ------------
@@ -74,6 +95,16 @@ Here is a view of the wireframe
 
 It's based on the Basel Face Model, facial-region-only variant, from 3DDFA_V2 [2]. I added a smooth transition to a flat background plane. Then added the mouth interior,
 blend-shapes for closing eyes, as well as "teeth". I used Cinema4D to do it. The scene file is in the assets folder.
+
+And some more views, including the morph targets with closed eyes.
+
+![](doc/mesh1.png)
+
+![](doc/mesh2.png)
+
+![](doc/mesh3.png)
+
+![](doc/mesh4.png)
 
 
 Todo
