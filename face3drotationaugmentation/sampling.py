@@ -62,7 +62,7 @@ def sample_more_face_params(rot : Rotation, rng : np.random.RandomState, angle_s
     psamples = hp_distribution(*get_p_bounds(hsamples, p))
     bsamples = hp_distribution(*get_b_bounds(hsamples, b))
     hpb = np.stack([hsamples,psamples,bsamples],axis=-1)
-    hpb = np.concatenate([np.asarray([[h,p,b]]), hpb])
+    hpb = np.concatenate([np.asarray([[h,p,b]]), hpb]) # <------- WARNING: Always adding the original rotation, too.
     hpb = deg2rad*np.clip(hpb, np.array([[-90.,-60.,-60]]), np.array([[90.,60.,60]]))
     
     return graphics.make_rot(hpb)

@@ -1,5 +1,6 @@
-from typing import List
+from typing import List, Dict,Any
 from matplotlib import pyplot
+import copy
 import numpy as np
 import numpy.typing as npt
 import cv2
@@ -16,7 +17,22 @@ from face3drotationaugmentation import depthestimation
 deg2rad = np.pi/180.
 
 
-def augment_sample(angle_step, prob_closed_eyes, prob_spotlight, rng, sample):
+def make_sample_for_passthrough(sample):
+    sample = copy.copy(sample)
+    meshdata, keypoint_indices = graphics.FaceAugmentationScene.load_assets()
+    verts = graphics.compute_initial_posed_vertices(meshdata, graphics.Faceparams(
+        xy=sample['xy'],
+        scale=sample['scale'],
+        rot=sample['rot'],
+        shapeparam=np.concatenate([sample['shapeparam'], np.zeros((2,))]) # Append eye closing parameters.
+    ))
+    sample['pt3d_68'] = verts[keypoint_indices]
+    sample['roi'] = dataset300wlp.head_bbox_from_keypoints(verts[keypoint_indices])
+    del sample['name']
+    return sample
+
+
+def augment_sample(angle_step : float, prob_closed_eyes : float, prob_spotlight : float, rng : np.random.RandomState, sample : Dict[str,Any]):
     if not depthestimation.initialized:
         depthestimation.init()
 

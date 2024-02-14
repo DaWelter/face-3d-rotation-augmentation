@@ -30,6 +30,7 @@ class DatasetWriter(object):
         self._small_data = defaultdict(list)
         self._counts_by_name = defaultdict(int)
         self._names = dict()
+        self.jpgquality = 99
 
     def close(self):
         if not self._counts_by_name:
@@ -87,7 +88,7 @@ class DatasetWriter(object):
         i = self._handle_counting(name)
         imagefilename = f"{name}_{i:02d}.jpg"
         Image.fromarray(sample['image']).save(
-            os.path.join(self._imagedir, imagefilename), quality=99)
+            os.path.join(self._imagedir, imagefilename), quality=self.jpgquality)
         return imagefilename
 
     def write(self, name, sample):

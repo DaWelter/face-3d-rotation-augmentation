@@ -170,3 +170,51 @@ class Dataset300WLP(object):
     def __iter__(self):
         for i in range(len(self)):
             yield self[i]
+
+
+class DatasetAFLW2k3D(object):
+    def __init__(self, filename):
+        self._zf = zf = zipfile.ZipFile(filename)
+        self._matfiles = self._discover_samples(zf)
+        self._bfm = bfm.BFMModel.load()
+    
+    @staticmethod
+    def _discover_samples(zf):
+        filenames = [ f.filename for f in zf.filelist if splitext(f.filename)[1]=='.mat' and f.filename.startswith('AFLW2000/image') ]
+        return filenames
+
+    @property
+    def filenames(self):
+        return [(os.path.splitext(matfile)[0]).split('/')[-1] for matfile in self._matfiles ]
+
+    def __getitem__(self, i):
+        matfile = self._matfiles[i]
+
+        with io.BytesIO(self._zf.read(matfile)) as f:
+            data = scipy.io.loadmat(f)
+
+        jpgbuffer = self._zf.read(splitext(matfile)[0]+'.jpg')
+        img = imdecode(jpgbuffer)
+        
+        # with io.BytesIO(self._zf.read(get_landmarks_filename(matfile))) as f:
+        #     landmarkdata = scipy.io.loadmat(f)
+
+        name = (os.path.splitext(matfile)[0]).split('/')[-1]
+
+        sample = parse_sample(data, img)
+        sample.update({
+            'image' : img,
+            'name' : name
+            #'pt2d_68' : landmarkdata['pts_2d'],
+        })
+        return sample
+
+    def close(self):
+        self._zf.close()
+    
+    def __len__(self):
+        return len(self._matfiles)
+
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]

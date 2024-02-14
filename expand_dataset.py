@@ -5,7 +5,7 @@ from contextlib import closing
 import argparse
 
 import face3drotationaugmentation.dataset300wlp as dataset300wlp
-from face3drotationaugmentation.generate import augment_sample, SampleVisualizerWindow
+from face3drotationaugmentation.generate import augment_sample, SampleVisualizerWindow, make_sample_for_passthrough
 from face3drotationaugmentation.datasetwriter import dataset_writer
 
 deg2rad = np.pi/180.
@@ -24,6 +24,11 @@ def main(filename300wlp : str, outputfilename : str, max_num_frames : int, enabl
             assert name.endswith("_0")
             name = name[:-2]
             
+            # TODO: Remove regeneration of input-image (which has imperfections
+            # due to the rendering) and enable this pass-through.
+            #original_out = make_sample_for_passthrough(sample)
+            #writer.write(name, original_out)
+
             generated_samples = list(augment_sample(angle_step, prob_closed_eyes, prob_spotlight, rng, sample))
 
             if enable_vis and np.random.randint(0,10)==0:
@@ -32,10 +37,6 @@ def main(filename300wlp : str, outputfilename : str, max_num_frames : int, enabl
 
             for new_sample in generated_samples:
                 writer.write(name, new_sample)
-
-
-
-
 
 
 if __name__ == '__main__':
