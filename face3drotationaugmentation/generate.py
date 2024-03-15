@@ -7,7 +7,6 @@ import cv2
 
 import pyrender
 
-import face3drotationaugmentation.dataset300wlp as dataset300wlp
 import face3drotationaugmentation.vis as vis
 import face3drotationaugmentation.graphics as graphics
 import face3drotationaugmentation.sampling as sampling
@@ -27,7 +26,7 @@ def make_sample_for_passthrough(sample):
         shapeparam=np.concatenate([sample['shapeparam'], np.zeros((2,))]) # Append eye closing parameters.
     ))
     sample['pt3d_68'] = verts[keypoint_indices]
-    sample['roi'] = dataset300wlp.head_bbox_from_keypoints(verts[keypoint_indices])
+    sample['roi'] = graphics.compute_bounding_box(verts[meshdata.get_face_vertex_mask()])
     del sample['name']
     return sample
 
@@ -55,11 +54,11 @@ def augment_sample(angle_step : float, prob_closed_eyes : float, prob_spotlight 
             flags = pyrender.RenderFlags.SHADOWS_ALL
 
         with augscene(more_rot, new_shapeparam, eyes_closing_amount, light_param) as items:
-            scene, (R,t), keypoints = items
+            scene, (R,t), keypoints, roi = items
             color, _ = renderer.render(scene, flags=flags)
             color = np.ascontiguousarray(color)
 
-        roi = dataset300wlp.head_bbox_from_keypoints(keypoints)
+        #roi = dataset300wlp.head_bbox_from_keypoints(keypoints)
 
         yield {
             'image' : color,

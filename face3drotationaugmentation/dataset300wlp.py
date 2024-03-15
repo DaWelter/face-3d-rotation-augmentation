@@ -57,31 +57,6 @@ def move_aflw_head_center_to_between_eyes(scale, rot, xy):
     return xy + offset[:2]
 
 
-def head_bbox_from_keypoints(keypts):
-    assert keypts.shape[-2] == 68
-    assert keypts.shape[-1] in (2,3), f"Bad shape {keypts.shape}"
-    eye_corner_indices = [45, 42, 39, 36]
-    jaw_right_idx = [0, 1]
-    jaw_left_idx = [16,15]
-    chin_idx = [ 7,8,9 ]
-    point_between_eyes = np.average(keypts[...,eye_corner_indices,:], axis=-2)
-    upvec = point_between_eyes - np.average(keypts[...,chin_idx,:], axis=-2)
-    upvec /= np.linalg.norm(upvec)
-    jaw_center_point = np.average(keypts[...,jaw_right_idx + jaw_left_idx,:],axis=-2)
-    radius = np.linalg.norm(jaw_center_point - point_between_eyes, axis=-1, keepdims=True)
-    center = 0.5*(jaw_center_point + point_between_eyes) + 0.25*radius*upvec
-    def mkpoint(cx, cy):
-        return center[...,:2] +  radius * np.array([cx, cy])
-    corners = np.asarray([ mkpoint(cx,cy) for cx,cy in [
-        (-1,1), (1,1), (1,-1), (-1,-1)
-    ] ]).swapaxes(0,-2)
-    allpoints = np.concatenate([keypts[...,:2], corners], axis=-2)
-    min_ = np.amin(allpoints[...,:2], axis=-2)
-    max_ = np.amax(allpoints[...,:2], axis=-2)
-    roi = np.concatenate([min_, max_], axis=-1).astype(np.float32)
-    return roi
-
-
 def discover_samples(zf):
     names = frozenset(['AFW', 'HELEN', 'IBUG', 'LFPW'])
     isInDataSubsets = lambda s: s.split(os.path.sep)[1] in names

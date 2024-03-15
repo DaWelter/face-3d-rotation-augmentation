@@ -116,6 +116,13 @@ def estimate_vertex_normals(vertices, tris):
     return new_normals
 
 
+def compute_bounding_box(vertices):
+    '''Output format is x0,y0,x1,y1 (left,top,right,bottom).'''
+    min_ = np.amin(vertices[...,:2], axis=-2)
+    max_ = np.amax(vertices[...,:2], axis=-2)
+    return np.concatenate([min_, max_], axis=-1).astype(np.float32)
+
+
 class Meshdata(NamedTuple):
     vertices : FloatArray
     tris : IntArray
@@ -132,6 +139,14 @@ class Meshdata(NamedTuple):
     @property
     def num_tris(self):
         return self.tris.shape[0]
+    
+    def get_face_vertex_mask(self):
+        '''By convention the original area of the BFM has weight 1.
+        
+        Other vertices have less. Note that this are encompasses 
+        more than only the 68 keypoints like parts of the forehead.
+        '''
+        return self.vertex_weights > 0.99
 
 
 class Faceparams(NamedTuple):
@@ -200,6 +215,10 @@ class FaceWithBackgroundModel(object):
         self._scale = scale
         self._shapeparam = shapeparam
         self._faceparams = Faceparams(xy, scale, rot, shapeparam)
+        # For getting the bounding box of the face region.
+        # Could use the bfm.BFMModel class for this too maybe.
+        # Not sure if it's on the same scale.
+        self._face_vertex_mask = meshdata.get_face_vertex_mask()
 
         h, w = image.shape[:2]
 
@@ -240,7 +259,7 @@ class FaceWithBackgroundModel(object):
         '''
         meshdata = self._meshdata
         # TODO: a better way to recover the vertices of the face model (without surrounding)
-        face_vertex_mask = meshdata.vertex_weights > 0.99
+        face_vertex_mask = self._face_vertex_mask
         face_indices, = np.nonzero(face_vertex_mask)
         notface_indices, = np.nonzero(~face_vertex_mask)
         # Thin out the vertices for reasonably fast closest distance computation
@@ -340,7 +359,8 @@ class FaceWithBackgroundModel(object):
         self._meshdata = self._compute_weights_dynamically(new_rot)
         rotoffset = self._rot.inv() * new_rot
         vertices = re_pose(self._meshdata, self._faceparams, rotoffset, self.rotation_center, new_shapeparam)
-        normals =estimate_vertex_normals(vertices, self._meshdata.tris)
+        normals = estimate_vertex_normals(vertices, self._meshdata.tris)
+        bbox = compute_bounding_box(vertices[self._face_vertex_mask])
         if 0:
             # Looks good without it
             vertices = self._apply_smoothing(vertices)
@@ -353,7 +373,7 @@ class FaceWithBackgroundModel(object):
             self._uvs,
             self._meshdata.color,
             None
-        ), tr)
+        ), tr, bbox)
 
 
 def create_pyrender_material(original_image, texture_border):
@@ -469,7 +489,7 @@ class FaceAugmentationScene(object):
         assert (new_shapeparam is None) == (eyes_closing is None)
         if new_shapeparam is not None:
             new_shapeparam = np.concatenate([new_shapeparam, eyes_closing])
-        meshdata, tr = self.face_model(new_rot, new_shapeparam)
+        meshdata, tr, bbox = self.face_model(new_rot, new_shapeparam)
         prim = pyrender.Primitive(
             positions = meshdata.vertices, 
             indices=meshdata.tris, 
@@ -486,7 +506,7 @@ class FaceAugmentationScene(object):
             self.material.emissiveFactor = 1.
         try:
             keypoints = meshdata.vertices[self.keypoint_indices]
-            yield (self.scene, tr, keypoints)
+            yield (self.scene, tr, keypoints, bbox)
         finally:
             self.scene.remove_node(face_node)
             if light_direction_vec is not None:
