@@ -27,7 +27,7 @@ class DatasetWriter(object):
     def __init__(self, filename):
         self._filename = filename
         self._imagedir = os.path.splitext(filename)[0]
-        self._small_data = defaultdict(list)
+        self._samples_by_field = defaultdict(list)
         self._counts_by_name = defaultdict(int)
         self._names = dict()
         self.jpgquality = 99
@@ -36,7 +36,7 @@ class DatasetWriter(object):
         if not self._counts_by_name:
             return
 
-        dat = self._small_data
+        dat = self._samples_by_field
         # Convert to numpy so we can use fancy indexing
         for k, v in dat.items():
             if not isinstance(next(iter(v)), str):
@@ -97,7 +97,7 @@ class DatasetWriter(object):
         sample['image'] = self._handle_image(name, sample)
         sample['rot'] = sample['rot'].as_quat()
         for k, v in sample.items():
-            self._small_data[k].append(v)
+            self._samples_by_field[k].append(v)
 
 
 @contextlib.contextmanager
