@@ -5,10 +5,11 @@ import zipfile
 import io
 import scipy.io
 import cv2
-from typing import List
+from typing import Any, List
 from scipy.spatial.transform import Rotation
+from collections.abc import Mapping
 
-from face3drotationaugmentation.facemodel import bfm
+from .common import AugmentedSample, FloatArray, UInt8Array
 
 
 def imdecode(buffer):
@@ -76,7 +77,7 @@ def get_landmarks_filename(matfile : str):
     return os.path.sep.join(elements[:-2]+['landmarks']+elements[-2:-1]+[name])
 
 
-def parse_sample(data, img):
+def parse_sample(data : Mapping[str,Any], img : UInt8Array) -> AugmentedSample:
     pitch, yaw, roll, tx, ty, tz, scale = data['Pose_Para'][0]
     h, w, _ = img.shape
 
@@ -95,12 +96,15 @@ def parse_sample(data, img):
 
     # The matlab file contains a bounding box which is however way too big for the image size.
 
-    return { 
-        'rot' :  rot,
-        'xy' : xy,
-        'scale' : scale,
-        'shapeparam' : shapeparams
-    }
+    return AugmentedSample(
+        rot=rot,
+        xy=xy,
+        scale=scale,
+        pt3d_68=None,
+        roi=None,
+        shapeparam=shapeparams,
+        image=img
+    )
 
 
 class Dataset300WLP(object):
@@ -108,13 +112,13 @@ class Dataset300WLP(object):
         self._zf = zf = zipfile.ZipFile(filename)
         matfiles = discover_samples(zf)
         self._matfiles = remove_artificially_rotated_faces(matfiles) if only_originals else matfiles
-        self._bfm = bfm.BFMModel.load()
 
     @property
     def filenames(self):
         return [(os.path.splitext(matfile)[0]).split('/')[-1] for matfile in self._matfiles ]
 
-    def __getitem__(self, i):
+    def __getitem__(self, i : int) -> tuple[str, AugmentedSample]:
+        """Returns the sample and basename."""
         matfile = self._matfiles[i]
 
         with io.BytesIO(self._zf.read(matfile)) as f:
@@ -129,12 +133,7 @@ class Dataset300WLP(object):
         name = (os.path.splitext(matfile)[0]).split('/')[-1]
 
         sample = parse_sample(data, img)
-        sample.update({
-            'image' : img,
-            'name' : name
-            #'pt2d_68' : landmarkdata['pts_2d'],
-        })
-        return sample
+        return name, sample
 
     def close(self):
         self._zf.close()
@@ -151,7 +150,6 @@ class DatasetAFLW2k3D(object):
     def __init__(self, filename):
         self._zf = zf = zipfile.ZipFile(filename)
         self._matfiles = self._discover_samples(zf)
-        self._bfm = bfm.BFMModel.load()
     
     @staticmethod
     def _discover_samples(zf):
@@ -162,7 +160,7 @@ class DatasetAFLW2k3D(object):
     def filenames(self):
         return [(os.path.splitext(matfile)[0]).split('/')[-1] for matfile in self._matfiles ]
 
-    def __getitem__(self, i):
+    def __getitem__(self, i : int) -> tuple[str, AugmentedSample]:
         matfile = self._matfiles[i]
 
         with io.BytesIO(self._zf.read(matfile)) as f:
@@ -177,12 +175,7 @@ class DatasetAFLW2k3D(object):
         name = (os.path.splitext(matfile)[0]).split('/')[-1]
 
         sample = parse_sample(data, img)
-        sample.update({
-            'image' : img,
-            'name' : name
-            #'pt2d_68' : landmarkdata['pts_2d'],
-        })
-        return sample
+        return name, sample
 
     def close(self):
         self._zf.close()

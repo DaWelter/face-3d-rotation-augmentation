@@ -7,6 +7,10 @@ from functools import cached_property, lru_cache
 from scipy.spatial.transform import Rotation
 from PIL import Image
 
+from .common import AugmentedSample, FloatArray, UInt8Array
+
+
+
 variable_length_hdf5_buffer_dtype = h5py.special_dtype(vlen=np.dtype('uint8'))
 
 
@@ -35,7 +39,7 @@ class ImagePathDs(object):
                     break
         if not found:
             raise RuntimeError(f"Cannot find images for image path dataset. Looking for name {first} with roots {directories_to_try} and extensions {extensions_to_try}")
-        return [ join(root_dir,s.decode('ascii')+ext) for s in names ]
+        return [ join(root_dir,s.decode('ascii')+ext) for s in names ] # type: ignore[possiblyUnbound]
 
     def __getitem__(self, index : int):
         return Image.open(self._filelist[index])
@@ -64,6 +68,7 @@ Whitelist = List[str]
 
 def open_dataset(g : h5py.Group, name : str) -> MaybeWrappedH5Dataset:
     ds = g[name]
+    assert isinstance(ds, h5py.Dataset)
     if not 'storage' in ds.attrs:
         return DirectNumpyDs(ds)
     typeattr = ds.attrs['storage']
@@ -99,16 +104,19 @@ class Hdf5PoseDataset(object):
     def __len__(self):
         return self._frame_count
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> tuple[str, AugmentedSample]:
         if index<0 or index >= len(self):
             raise IndexError(f"Index {index} on dataset of length {len(self)}")
-        fields = {
+        fields : dict[str,Any] = {
             k:ds[index] for k,ds in self._datasets
         }
-        fields['rot'] = Rotation.from_quat(fields.pop('quats'))
-        xys = fields.pop('coords')
-        fields['xy'] = xys[:2]
-        fields['scale'] = xys[2]
-        fields['image'] = np.asarray(fields.pop('images'))
-        fields['roi'] = fields.pop('rois')
-        return fields
+        sample = AugmentedSample(
+            image=np.asarray(fields.pop('images')),
+            rot=Rotation.from_quat(fields.pop('quats')),
+            xy=fields['coords'][:2],
+            scale=fields['coords'][2],
+            roi=None,
+            shapeparam=fields.pop('shapeparams'),
+            pt3d_68=None,
+        )
+        return f"{index:05d}", sample

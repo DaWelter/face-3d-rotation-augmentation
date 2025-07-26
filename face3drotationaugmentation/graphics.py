@@ -13,14 +13,11 @@ import trimesh
 import pyrender
 import torch
 
-from . import facemodel
+from .common import FloatArray, IntArray, AugmentedSample
 from .facemodel import bfm
 
-FloatArray = npt.NDArray[Union[np.float32,np.float64]]
-IntArray = npt.NDArray[Union[np.int32,np.int64]]
 
-
-def get_hpb(rot : Rotation):
+def get_hpb(rot: Rotation) -> FloatArray:
     '''Conversion to heading-pitch-bank.
     
     In terms of extrinsic rotations, the first rotation is around z (bank/roll), then x (pitch), then y (yaw/heading)
@@ -28,14 +25,14 @@ def get_hpb(rot : Rotation):
     return rot.as_euler('YXZ')
 
 
-def make_rot_by_axis_rotations(hpb):
+def make_rot_by_axis_rotations(hpb: FloatArray) -> Rotation:
     '''For testing - to ensure we have the right convention.'''
     h, p, b = hpb.T
     z = np.zeros(h.shape)
     return Rotation.from_rotvec(np.vstack([z,h,z]).T) * Rotation.from_rotvec(np.vstack([p,z,z]).T) * Rotation.from_rotvec(np.vstack([z,z,b]).T)
 
 
-def make_rot(hpb):
+def make_rot(hpb: FloatArray) -> Rotation:
     '''Conversion from heading-pitch-bank.
     
     In terms of extrinsic rotations, the first rotation is around z (bank/roll), then x (pitch), then y (yaw/heading)
@@ -43,35 +40,35 @@ def make_rot(hpb):
     return Rotation.from_euler('YXZ', hpb)
 
 
-def sigmoid(x):
+def sigmoid(x: FloatArray) -> FloatArray:
     return 1./(1. + np.exp(-x))
 
 
-def affine3d_chain(Ta, Tb):
+def affine3d_chain(Ta: Tuple[Rotation, FloatArray], Tb: Tuple[Rotation, FloatArray]) -> Tuple[Rotation, FloatArray]:
     Ra, ta = Ta
     Rb, tb = Tb
     return Ra*Rb, Ra.apply(tb) + ta
 
 
-def affine3d_inv(Ta):
+def affine3d_inv(Ta: Tuple[Rotation, FloatArray]) -> Tuple[Rotation, FloatArray]:
     Ra, ta = Ta
     RaInv = Ra.inv()
     return RaInv, -RaInv.apply(ta)
 
 
-def apply_affine3d(tr, vertices):
+def apply_affine3d(tr: Tuple[Rotation, FloatArray], vertices: FloatArray) -> FloatArray:
     R, t = tr
     return R.apply(vertices) + t
 
 
-def apply_s_rot_t(vertices, xy, scale, rot):
+def apply_s_rot_t(vertices: FloatArray, xy: FloatArray, scale: float, rot: Rotation) -> FloatArray:
     "Scale, rotate and translate."
     vertices = rot.apply(vertices * scale)
     vertices[...,:2] += xy
     return vertices
 
 
-def find_closest_points(reference_points, distanced_points):
+def find_closest_points(reference_points: FloatArray, distanced_points: FloatArray) -> Tuple[np.ndarray, FloatArray]:
     if len(reference_points)*len(distanced_points) < 100:
         cross_distances = np.linalg.norm(reference_points[None,:,:]-distanced_points[:,None,:],axis=-1)
         idx_closest = np.argmin(cross_distances, axis=1)
@@ -82,7 +79,7 @@ def find_closest_points(reference_points, distanced_points):
     return idx_closest, distances
 
 
-def interpolate_images(values, sample_points):
+def interpolate_images(values: torch.Tensor, sample_points: torch.Tensor) -> torch.Tensor:
     '''
     values: Image like with shape (...,C,H,W)
     sample_points: with shape (...,N,2)
@@ -100,37 +97,35 @@ def interpolate_images(values, sample_points):
     return samples
 
 
-def interpolate_zero_channel_numpy_image(image, sample_points):
+def interpolate_zero_channel_numpy_image(image: np.ndarray, sample_points: FloatArray) -> FloatArray:
     return interpolate_images(torch.from_numpy(image[None,:,:]).to(torch.float32), torch.from_numpy(sample_points).to(torch.float32))[:,0].numpy()
 
 
-def apply_blendshapes(vertices, blend_shape_vertices, shapeparam):
+def apply_blendshapes(vertices: FloatArray, blend_shape_vertices: FloatArray, shapeparam: FloatArray) -> FloatArray:
     '''Adds the blend-shapes to the vertices using "shapeparam" as weights.'''
     return vertices + np.sum((blend_shape_vertices * shapeparam[:,None,None]), axis=0)
 
 
-def estimate_vertex_normals(vertices, tris):
+def estimate_vertex_normals(vertices: FloatArray, tris: IntArray) -> FloatArray:
     face_normals = trimesh.Trimesh(vertices, tris).face_normals
     new_normals = trimesh.geometry.mean_vertex_normals(len(vertices), tris, face_normals)
+    assert isinstance(new_normals, np.ndarray)
     assert new_normals.shape == vertices.shape, f"{new_normals.shape} vs {vertices.shape}"
     return new_normals
 
 
-def compute_bounding_box(vertices):
+def compute_bounding_box(vertices: FloatArray) -> FloatArray:
     '''Output format is x0,y0,x1,y1 (left,top,right,bottom).'''
     min_ = np.amin(vertices[...,:2], axis=-2)
     max_ = np.amax(vertices[...,:2], axis=-2)
     return np.concatenate([min_, max_], axis=-1).astype(np.float32)
 
 
-class Meshdata(NamedTuple):
+class BaseMeshdata(NamedTuple):
     vertices : FloatArray
-    tris : IntArray
+    tris : IntArray # (Num Tris, 3)
     normals : FloatArray
-    vertex_weights : FloatArray
-    uvs : Optional[FloatArray]
-    color : Optional[FloatArray]
-    deformbasis : Optional[FloatArray] # (Basis Vectors x Points x 3)
+    color : FloatArray
 
     @property
     def num_vertices(self):
@@ -139,12 +134,30 @@ class Meshdata(NamedTuple):
     @property
     def num_tris(self):
         return self.tris.shape[0]
-    
+
+
+class Meshdata(NamedTuple):
+    vertices : FloatArray
+    tris : IntArray # (Num Tris, 3)
+    normals : FloatArray
+    color : FloatArray
+    vertex_weights : FloatArray
+    uvs : FloatArray
+    deformbasis : FloatArray | None # (Basis Vectors, Points, 3)
+
+    @property
+    def num_vertices(self):
+        return self.vertices.shape[0]
+
+    @property
+    def num_tris(self):
+        return self.tris.shape[0]
+
     def get_face_vertex_mask(self):
         '''By convention the original area of the BFM has weight 1.
         
-        Other vertices have less. Note that this are encompasses 
-        more than only the 68 keypoints like parts of the forehead.
+        Refers to the full mesh. Other vertices have less. This separates the 
+        face from the background.
         '''
         return self.vertex_weights > 0.99
 
@@ -153,7 +166,7 @@ class Faceparams(NamedTuple):
     xy : FloatArray
     scale : float
     rot : Rotation
-    shapeparam : Optional[FloatArray]
+    shapeparam : FloatArray
 
 
 def compute_initial_posed_vertices(meshdata : Meshdata, faceparams : Faceparams):
@@ -164,6 +177,7 @@ def compute_initial_posed_vertices(meshdata : Meshdata, faceparams : Faceparams)
 
     Returns posed vertices.
     """
+    assert meshdata.deformbasis is not None
     vertices = apply_blendshapes(meshdata.vertices, meshdata.deformbasis, faceparams.shapeparam)
     unrotated_vertices = apply_s_rot_t(vertices, faceparams.xy, faceparams.scale, Rotation.identity())
     vertices = apply_s_rot_t(vertices, faceparams.xy, faceparams.scale, faceparams.rot)
@@ -183,7 +197,7 @@ def re_pose(meshdata : Meshdata, original_faceparams : Faceparams, rot_offset, r
 
     Returns posed vertices.
     """
-
+    assert meshdata.deformbasis is not None
     # First reverse the original pose transform, ignoring scale
     vertices = meshdata.vertices.copy()
     vertices[:,:2] -= original_faceparams.xy
@@ -224,7 +238,7 @@ class FaceWithBackgroundModel(object):
 
         # Parameters to help compute the deformation weights for 
         # blending the rotated bits with the stationary surrounding.
-        self._dynamic_weight_parameters = self._dynamic_weight_parameters()
+        self._dynamic_weight_parameters = self._compute_dynamic_weight_parameters()
 
         self._meshdata = self._compute_weights_dynamically(rot)
         
@@ -247,7 +261,7 @@ class FaceWithBackgroundModel(object):
         self.background_plane_z_coord = np.average(vertices_according_to_pose[self._meshdata.vertex_weights < 0.01,2])
 
 
-    def _dynamic_weight_parameters(self):
+    def _compute_dynamic_weight_parameters(self):
         '''Computes currently ...
 
         Return:
@@ -269,7 +283,7 @@ class FaceWithBackgroundModel(object):
         return distances, notface_indices, meshdata.vertices.copy()
 
 
-    def _compute_weights_dynamically(self, rot : Rotation):
+    def _compute_weights_dynamically(self, rot : Rotation) -> Meshdata:
         """ Computes weights depending on the desired pose.
 
         The vertex weights of the face are all 1 to apply the full rotation there.
@@ -351,7 +365,7 @@ class FaceWithBackgroundModel(object):
         return (R, t)
 
 
-    def __call__(self, new_rot = None, new_shapeparam = None) -> Tuple[Meshdata,Tuple[Rotation,np.ndarray]]:
+    def __call__(self, new_rot = None, new_shapeparam = None) -> Tuple[Meshdata,Tuple[Rotation,FloatArray], FloatArray]:
         if new_rot is None:
             new_rot = self._rot
         if new_shapeparam is None:
@@ -365,14 +379,15 @@ class FaceWithBackgroundModel(object):
             # Looks good without it
             vertices = self._apply_smoothing(vertices)
         tr = self._compute_combined_transform(rotoffset)
+        assert self._meshdata.vertex_weights is not None
         return (Meshdata(
-            vertices,
-            self._meshdata.tris,
-            normals, #self._meshdata.normals,
-            None,
-            self._uvs,
-            self._meshdata.color,
-            None
+            vertices=vertices,
+            tris=self._meshdata.tris,
+            normals=normals,
+            vertex_weights=self._meshdata.vertex_weights.copy(),
+            uvs=self._uvs,
+            color=self._meshdata.color,
+            deformbasis=None
         ), tr, bbox)
 
 
@@ -458,27 +473,28 @@ class SpotlightLookingAtPoint(object):
 class FaceAugmentationScene(object):
     '''Handles the pyrender parts mostly.'''
 
-    def __init__(self, sample):
-        xy = sample['xy']
-        scale = sample['scale']
-        shapeparam = sample['shapeparam']
-        shapeparam = np.concatenate([shapeparam, [0.,0.]])
-        image = sample['image']
-        rot = sample['rot']
+    def __init__(self, sample: AugmentedSample):
+        shapeparam = np.concatenate([sample.shapeparam, [0., 0.]])
         meshdata, keypoint_indices = FaceAugmentationScene.load_assets()
-        self.face_model = face_model = FaceWithBackgroundModel(meshdata, xy, scale, rot, shapeparam, image)
+        self.face_model = face_model = FaceWithBackgroundModel(
+            meshdata, sample.xy, sample.scale, sample.rot, shapeparam, sample.image
+        )
         self.scene = scene = pyrender.Scene(
-            ambient_light=[0., 0., 0.], #[1., 1., 1.], 
+            ambient_light=[0., 0., 0.],
             bg_color=[0.0, 0.0, 0.0]
         )
-        self.material = create_pyrender_material(image, FaceWithBackgroundModel.texture_border)
+        self.material = create_pyrender_material(sample.image, FaceWithBackgroundModel.texture_border)
         self.keypoint_indices = keypoint_indices
-        FaceAugmentationScene.add_camera(scene, image.shape, scale, face_model.background_plane_z_coord)
-        self.light = SpotlightLookingAtPoint(distance=scale*10, look_at_point=xy, roi_radius=scale)
+        FaceAugmentationScene.add_camera(
+            scene, sample.image.shape, sample.scale, face_model.background_plane_z_coord
+        )
+        self.light = SpotlightLookingAtPoint(
+            distance=sample.scale * 10, look_at_point=sample.xy, roi_radius=sample.scale
+        )
 
 
     @contextlib.contextmanager
-    def __call__(self, new_rot = None, new_shapeparam = None, eyes_closing = None, light_direction_vec = None):
+    def __call__(self, new_rot = None, new_shapeparam : FloatArray | None = None, eyes_closing : FloatArray | None = None, light_direction_vec = None):
         '''Temporarily assembles the scene and ...
         
         Returns
@@ -487,7 +503,7 @@ class FaceAugmentationScene(object):
             The 68 3d landmarks
         '''
         assert (new_shapeparam is None) == (eyes_closing is None)
-        if new_shapeparam is not None:
+        if new_shapeparam is not None and eyes_closing is not None:
             new_shapeparam = np.concatenate([new_shapeparam, eyes_closing])
         meshdata, tr, bbox = self.face_model(new_rot, new_shapeparam)
         prim = pyrender.Primitive(
@@ -544,8 +560,8 @@ class FaceAugmentationScene(object):
             vertices = _create_points(vertices)
             # Dummy is good enough for unlit scene
             normals = np.broadcast_to(np.asarray([[ 0., 0., 1.]]), (len(vertices),3))
-            color = np.tile(np.asarray(shadowmap)[:,None], (1,3)) if shadowmap is not None else None
-            return Meshdata(vertices, tris, normals, None, None, color, None)
+            color = np.tile(np.asarray(shadowmap)[:,None], (1,3)) if shadowmap is not None else np.ones_like(vertices)
+            return BaseMeshdata(vertices, tris, normals, color)
 
         with open(filename, 'rb') as f:
             data = pickle.load(f)
@@ -561,7 +577,7 @@ class FaceAugmentationScene(object):
             return md, md_teeth, md_surrounding, md_mouth, (idx_mouth_lower, idx_mouth_upper), (shape_left_eye_close,shape_right_eye_close)
 
     @staticmethod
-    def join_meshes(headmesh : Meshdata, teethmesh : Meshdata, surrounding : Meshdata, mouth : Meshdata, indices : Tuple[npt.NDArray[np.integer],...], headmodel : bfm.BFMModel) -> Meshdata:
+    def join_meshes(headmesh : BaseMeshdata, teethmesh : BaseMeshdata, surrounding : BaseMeshdata, mouth : BaseMeshdata, indices : Tuple[npt.NDArray[np.integer],...], headmodel : bfm.BFMModel) -> Meshdata:
         '''Assembles bits to a large mesh.
 
         Initially only the face vertices have a deformation basis. This function copies from this basis to appropriate parks like the teeth so they
@@ -571,7 +587,15 @@ class FaceAugmentationScene(object):
         assert headmesh.num_vertices == headmodel.vertexcount
         idx_mouth_lower, idx_mouth_upper = indices
         idx_mouth_upper_and_lower = np.concatenate([idx_mouth_lower, idx_mouth_upper])
-        def copy_basis(vertices_without_bases, vertices, basis, falloff=10000., decay_start_at=0.):
+        def extend_deform_basis(vertices_without_bases : FloatArray, vertices : FloatArray, basis : FloatArray, falloff : float=10000., decay_start_at : float =0.):
+            '''Extends the deform basis to new vertices.
+
+            Takes the basis vectors from the closest points in the reference mesh and applies a distance based falloff.
+            The falloff is useful for background. Otherwise, for actual parts of the face, not needed.
+
+            Returns:
+                Deform basis (#bases, #vertices_without_bases, 3)
+            '''
             idx_closest, distances = find_closest_points(vertices, vertices_without_bases)
             if 0:
                 import matplotlib.pyplot as pyplot
@@ -584,10 +608,10 @@ class FaceAugmentationScene(object):
                 axes[1].scatter(vertices_without_bases.T[0], vertices_without_bases.T[1],c='b')
                 pyplot.show()
             normalized_distance = np.maximum(distances - decay_start_at, 0.) / falloff
-            #weight = np.exp(-normalized_distance)
             weight = 0.5*(np.cos(np.minimum(1., normalized_distance)*np.pi)+1.)
             return basis[:,idx_closest,:]*weight[None,:,None]
-        def combine_triangles(meshes):
+        def concat_triangles(meshes):
+            '''Takes care of incrementing the vertex indices.'''
             vertexcounts = [0] + [ m.num_vertices for m in meshes[:-1] ]
             offsets = np.cumsum(vertexcounts)
             new_tris = np.concatenate([
@@ -596,13 +620,13 @@ class FaceAugmentationScene(object):
             return new_tris
         zeroy = np.asarray([[1.,0.,1.]])
         # This requires that the first N vertices of the headmesh correspond to the vertices in the prestine face model
-        teeth_lower_basis = copy_basis(teethmesh.vertices*zeroy, headmesh.vertices[idx_mouth_lower]*zeroy, headmodel.scaled_bases[:,idx_mouth_lower,:])
-        teeth_upper_basis = copy_basis(teethmesh.vertices*zeroy, headmesh.vertices[idx_mouth_upper]*zeroy, headmodel.scaled_bases[:,idx_mouth_upper,:])
-        surrounding_basis = copy_basis(
+        teeth_lower_basis = extend_deform_basis(teethmesh.vertices*zeroy, headmesh.vertices[idx_mouth_lower]*zeroy, headmodel.scaled_bases[:,idx_mouth_lower,:])
+        teeth_upper_basis = extend_deform_basis(teethmesh.vertices*zeroy, headmesh.vertices[idx_mouth_upper]*zeroy, headmodel.scaled_bases[:,idx_mouth_upper,:])
+        surrounding_basis = extend_deform_basis(
             surrounding.vertices, 
             headmesh.vertices[:], 
             headmodel.scaled_bases[:,:,:], 0.3, 0.02)
-        mouth_basis = copy_basis(
+        mouth_basis = extend_deform_basis(
             mouth.vertices,
             headmesh.vertices[idx_mouth_upper_and_lower],
             headmodel.scaled_bases[:,idx_mouth_upper_and_lower,:], 1.)
@@ -612,7 +636,7 @@ class FaceAugmentationScene(object):
             teethmesh.vertices, 
             teethmesh.vertices,
             surrounding.vertices,], axis=0)
-        new_tris = combine_triangles([ 
+        new_tris = concat_triangles([ 
             headmesh, 
             mouth, 
             teethmesh, 
@@ -626,6 +650,7 @@ class FaceAugmentationScene(object):
             teeth_upper_basis,
             surrounding_basis
         ], axis=1)
+        assert mouth.color is not None
         new_colors = np.concatenate([
             np.ones((headmesh.num_vertices,3)),
             mouth.color,
@@ -641,7 +666,8 @@ class FaceAugmentationScene(object):
             np.ones((teethmesh.num_vertices*2,)),
             np.zeros((surrounding.num_vertices,))
         ], axis=0)
-        return Meshdata(new_vertices, new_tris, new_normals, new_weights, None, new_colors, new_basis)
+        new_uvs = np.zeros((new_vertices.shape[0], 2), dtype=np.float32)
+        return Meshdata(new_vertices, new_tris, new_normals, new_colors, new_weights, new_uvs, new_basis)
 
     @staticmethod
     def extend_bfm_expression_basis(model : bfm.BFMModel, additional_deform_shapes):

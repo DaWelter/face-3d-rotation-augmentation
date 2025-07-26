@@ -1,7 +1,7 @@
 from scipy.spatial.transform import Rotation
 import numpy as np
 import cv2
-
+from .common import AugmentedSample, UInt8Array
 
 def draw_axis(img, rot, tdx=None, tdy=None, size = 100, brgt = 255, lw=3):
     rot = Rotation.as_matrix(rot)
@@ -44,17 +44,16 @@ def draw_roi(img, roi, color, linewidth):
     cv2.rectangle(img, (round(roi[0]),round(roi[1])), (round(roi[2]),round(roi[3])), color, linewidth)
 
 
-def draw_pose(img, sample, brightness, linewidth):
-    rot = sample['rot']
-    xy = sample['xy']
-    s = sample['scale']
+def draw_pose(img : UInt8Array, sample : AugmentedSample, brightness : int, linewidth: int) -> None:
+    rot = sample.rot
+    xy = sample.xy
     draw_axis(img, rot, tdx = xy[0], tdy = xy[1], brgt=brightness, lw=linewidth)
-    if s <= 0.:
-        print (f"Error, head size {s} not positive!")
+    if sample.scale <= 0.:
+        print (f"Error, head size {sample.scale} not positive!")
         print (sample)
     else:
-        cv2.circle(img, (int(xy[0]),int(xy[1])), int(s), (brightness,brightness,0), linewidth)
-    if 'pt3d_68' in sample:
-        draw_points3d(img, sample['pt3d_68'], False, brightness, (255,255,255))
-    if 'roi' in sample:
-        draw_roi(img, sample['roi'], 255, 2)
+        cv2.circle(img, (int(xy[0]),int(xy[1])), int(sample.scale), (brightness,brightness,0), linewidth)
+    if sample.pt3d_68 is not None:
+        draw_points3d(img, sample.pt3d_68, False, brightness, (255,255,255))
+    if sample.roi is not None:
+        draw_roi(img, sample.roi, 255, 2)

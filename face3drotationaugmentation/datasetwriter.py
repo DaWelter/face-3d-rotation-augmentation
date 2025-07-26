@@ -6,6 +6,7 @@ from PIL import Image
 from collections import defaultdict
 import contextlib
 
+from .common import AugmentedSample, FloatArray, UInt8Array
 
 class FieldCategory(object):
     general = ''
@@ -83,20 +84,21 @@ class DatasetWriter(object):
             self._names[name] = None
         return num
 
-    def _handle_image(self, name, sample):
+    def _handle_image(self, name : str, sample : AugmentedSample):
         os.makedirs(os.path.dirname(os.path.join(self._imagedir, name)), exist_ok=True)
         i = self._handle_counting(name)
         imagefilename = f"{name}_{i:02d}.jpg"
-        Image.fromarray(sample['image']).save(
+        Image.fromarray(sample.image).save(
             os.path.join(self._imagedir, imagefilename), quality=self.jpgquality)
         return imagefilename
 
-    def write(self, name, sample):
-        assert (set(sample.keys()) == set(['rot','xy','scale','image','pt3d_68', 'roi', 'shapeparam'])), f"Bad sample {list(sample.keys())}"
-        sample = copy(sample)
-        sample['image'] = self._handle_image(name, sample)
-        sample['rot'] = sample['rot'].as_quat()
-        for k, v in sample.items():
+    def write(self, name : str, sample : AugmentedSample):
+        assert sample.roi is not None
+        assert sample.pt3d_68 is not None
+        data = sample._asdict()
+        data['image'] = self._handle_image(name, sample)
+        data['rot'] = data['rot'].as_quat()
+        for k, v in data.items():
             self._samples_by_field[k].append(v)
 
 

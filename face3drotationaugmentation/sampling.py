@@ -4,7 +4,8 @@ from scipy.spatial.transform import Rotation
 from . import graphics
 from typing import Optional
 
-deg2rad = np.pi/180.
+from .common import deg2rad, FloatArray
+
 
 def clipped_normal(rng, min, max, scale_multi=0.5, *args, **kwargs):
     return np.clip(rng.normal(0.5*(min+max), scale_multi*0.5*(max-min), *args, **kwargs), min, max)
@@ -47,7 +48,7 @@ def get_b_bounds(h_samples, b):
     return b_min, b_max
 
 
-def sample_more_face_params(rot : Rotation, rng : np.random.RandomState, angle_step):
+def sample_more_face_params(rot : Rotation, rng : np.random.RandomState, angle_step : float) -> Rotation:
     '''
     Args:
         angle_step : In degrees
@@ -68,7 +69,7 @@ def sample_more_face_params(rot : Rotation, rng : np.random.RandomState, angle_s
     return graphics.make_rot(hpb)
 
 
-def sample_shapeparams(rng : np.random.RandomState, original_params : npt.NDArray[np.float64], n : int, prob_closed_eyes : float):
+def sample_shapeparams(rng : np.random.RandomState, original_params : FloatArray, n : int, prob_closed_eyes : float):
     new_shapeparams = np.broadcast_to(original_params[None,], (n,)+original_params.shape)
     if prob_closed_eyes > 0:
         eyes_closed = rng.binomial(1, p=prob_closed_eyes, size=(n,1))

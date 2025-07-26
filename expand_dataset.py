@@ -8,9 +8,6 @@ import face3drotationaugmentation.dataset300wlp as dataset300wlp
 from face3drotationaugmentation.generate import augment_sample, SampleVisualizerWindow, make_sample_for_passthrough
 from face3drotationaugmentation.datasetwriter import dataset_writer
 
-deg2rad = np.pi/180.
-
-
 def main(filename300wlp : str, outputfilename : str, max_num_frames : int, enable_vis : bool, angle_step: float, prob_closed_eyes : float, prob_spotlight : float):
     rng = np.random.RandomState(seed=1234567)
 
@@ -19,8 +16,7 @@ def main(filename300wlp : str, outputfilename : str, max_num_frames : int, enabl
     with closing(dataset300wlp.Dataset300WLP(filename300wlp)) as ds300wlp, dataset_writer(outputfilename) as writer:
         num_frames = min(max_num_frames, len(ds300wlp))
 
-        for _, sample in tqdm.tqdm(zip(range(num_frames), ds300wlp), total=num_frames):
-            name = sample['name']
+        for _, (name,sample) in tqdm.tqdm(zip(range(num_frames), ds300wlp), total=num_frames):
             assert name.endswith("_0")
             name = name[:-2]
             
