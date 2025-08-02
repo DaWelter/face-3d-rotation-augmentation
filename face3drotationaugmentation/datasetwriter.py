@@ -1,10 +1,16 @@
+from abc import abstractmethod
+from collections.abc import Generator
 import os
+from pathlib import Path
+from typing import Any, Literal
 import h5py
 from copy import copy
 import numpy as np
 from PIL import Image
 from collections import defaultdict
 import contextlib
+from scipy.spatial.transform import Rotation
+import scipy.io
 
 from .common import AugmentedSample, FloatArray, UInt8Array
 
@@ -19,7 +25,22 @@ class FieldCategory(object):
     semseg = 'seg'
 
 
-class DatasetWriter(object):
+class DatasetWriter:
+    @abstractmethod
+    def close(self):
+        """Write all data and clean up resources."""
+        ...
+
+    @abstractmethod
+    def write(self, name: str, sample: AugmentedSample):
+        """Add a sample.
+
+        Adding the same name multiple times is intended. A counter will be added.
+        """
+        ...
+
+
+class DatasetWriterCustomHdf5Format(DatasetWriter):
     '''For the extended pose dataset.
 
     Writes poses, 68 3d landmarks, shape parameters and rois to an hdf5 file.
@@ -27,7 +48,9 @@ class DatasetWriter(object):
     The "images" dataset in the h5 provides the image filename per sample.
     '''
 
-    def __init__(self, filename):
+    def __init__(self, filename: str):
+        if not (filename.lower().endswith('.h5') or filename.lower().endswith('.hdf5')):
+            raise ValueError("outputfilename must have hdf5 filename extension")
         self._filename = filename
         self._imagedir = os.path.splitext(filename)[0]
         self._samples_by_field = defaultdict(list)
@@ -103,9 +126,75 @@ class DatasetWriter(object):
             self._samples_by_field[k].append(v)
 
 
+class DatasetWriter300WLPLike(DatasetWriter):
+    def __init__(self, directory):
+        self.directory = Path(directory)
+        self._counts_by_name = defaultdict(int)
+        self.jpgquality = 99
+        self._have_dir = False
+
+    def close(self):
+        pass
+
+    def _convert_sample(self, file, sample: AugmentedSample):
+        human_head_radius_micron = 100.0e3
+        h, w, _ = sample.image.shape
+        scale = sample.scale / human_head_radius_micron / w * 224.0 / 0.5
+        xy = move_head_center_back(sample.scale, sample.rot, sample.xy)
+        tx = xy[0]
+        ty = h - xy[1]
+        tz = 0.0
+        pitch, yaw, roll = inv_aflw_rotation_conversion(sample.rot)
+        mat_dict = {
+            # TODO: maybe pad to full size?
+            'Shape_Para': np.pad(sample.shapeparam[:40, None] * 20.0 * 1.0e5, [(0, 199 - 40), [0, 0]]),
+            'Exp_Para': np.pad(sample.shapeparam[40:, None] * 5.0, [(0, 29 - 10), (0, 0)]),
+            'Pose_Para': [[pitch, yaw, roll, tx, ty, tz, scale]],
+            #'pt3d_68' : (sample.pt3d_68 * np.asarray([1.,1.,-1]) ).T  # output shape (3,68) Not sure if correct
+        }
+        scipy.io.savemat(file, mat_dict)
+
+    def write(self, name: str, sample: AugmentedSample):
+        # Note: *_0.jpg would be the original image
+        if not self._have_dir:
+            self.directory.mkdir()
+            self._have_dir = True
+        number = self._counts_by_name[name]
+        self._counts_by_name[name] += 1
+        filename = self.directory / f"{name}_{number}"
+        self._convert_sample(filename.with_suffix(".mat"), sample)
+        Image.fromarray(sample.image).save(filename.with_suffix(".jpg"), quality=self.jpgquality)
+
+
+def inv_aflw_rotation_conversion(rot: Rotation):
+    '''Rotation object to Euler angles for AFLW and 300W-LP data
+
+    Returns:
+        Batch x (Pitch,Yaw,Roll)
+    '''
+    P = np.asarray([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
+    M = P @ rot.as_matrix() @ P.T
+    rot = Rotation.from_matrix(M)
+    euler = rot.as_euler('XYZ')
+    euler *= np.asarray([1, -1, 1])
+    return euler
+
+
+def move_head_center_back(scale, rot, xy):
+    local_offset = np.array([0.0, -0.26, -0.9])
+    offset = rot.apply(local_offset) * scale
+    return xy - offset[:2]
+
+
+OutputFormats = Literal['custom_hdf5', '300wlp']
+
+
 @contextlib.contextmanager
-def dataset_writer(filename):
-    writer = DatasetWriter(filename)
+def dataset_writer(filename, format: OutputFormats) -> Generator[DatasetWriter, Any, None]:
+    if format == 'custom_hdf5':
+        writer = DatasetWriterCustomHdf5Format(filename)
+    else:
+        writer = DatasetWriter300WLPLike(filename)
     try:
         yield writer
     finally:

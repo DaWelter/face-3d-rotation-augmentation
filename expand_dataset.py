@@ -1,3 +1,4 @@
+import typing
 from matplotlib import pyplot
 import numpy as np
 import tqdm
@@ -6,7 +7,7 @@ import argparse
 
 import face3drotationaugmentation.dataset300wlp as dataset300wlp
 from face3drotationaugmentation.generate import augment_sample, SampleVisualizerWindow, make_sample_for_passthrough
-from face3drotationaugmentation.datasetwriter import dataset_writer
+from face3drotationaugmentation.datasetwriter import dataset_writer, OutputFormats
 
 
 def main(
@@ -17,12 +18,16 @@ def main(
     angle_step: float,
     prob_closed_eyes: float,
     prob_spotlight: float,
+    format: OutputFormats,
 ):
     rng = np.random.RandomState(seed=1234567)
 
     visualizer = SampleVisualizerWindow()
 
-    with closing(dataset300wlp.Dataset300WLP(filename300wlp)) as ds300wlp, dataset_writer(outputfilename) as writer:
+    with (
+        closing(dataset300wlp.Dataset300WLP(filename300wlp)) as ds300wlp,
+        dataset_writer(outputfilename, format) as writer,
+    ):
         num_frames = min(max_num_frames, len(ds300wlp))
 
         for _, (name, sample) in tqdm.tqdm(zip(range(num_frames), ds300wlp), total=num_frames):
@@ -59,9 +64,8 @@ if __name__ == '__main__':
         default=0.0,
         help="Probability to add spotlight shining from the side (between 0 and 1)",
     )
+    parser.add_argument("--format", choices=typing.get_args(OutputFormats), default='custom_hdf5')
     args = parser.parse_args()
-    if not (args.outputfilename.lower().endswith('.h5') or args.outputfilename.lower().endswith('.hdf5')):
-        raise ValueError("outputfilename must have hdf5 filename extension")
     main(
         args._300wlp,
         args.outputfilename,
@@ -70,4 +74,5 @@ if __name__ == '__main__':
         angle_step=args.yaw_step,
         prob_closed_eyes=args.prob_closed_eyes,
         prob_spotlight=args.prob_spotlight,
+        format=args.format,
     )
