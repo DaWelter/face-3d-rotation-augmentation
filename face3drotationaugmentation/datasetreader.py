@@ -10,7 +10,6 @@ from PIL import Image
 from .common import AugmentedSample, FloatArray, UInt8Array
 
 
-
 variable_length_hdf5_buffer_dtype = h5py.special_dtype(vlen=np.dtype('uint8'))
 
 
@@ -19,29 +18,31 @@ class DatasetEncoding(object):
 
 
 class ImagePathDs(object):
-    def __init__(self, ds : h5py.Dataset):
+    def __init__(self, ds: h5py.Dataset):
         assert ds.attrs['storage'] == DatasetEncoding.image_filename
         self._ds = ds
         self._filelist = ImagePathDs._find_filenames(ds)
 
     @staticmethod
-    def _find_filenames(ds : h5py.Dataset):
+    def _find_filenames(ds: h5py.Dataset):
         supported_extensions = ('.jpg', '.png', '.jpeg')
-        names : Sequence[bytearray] = ds[...]
+        names: Sequence[bytearray] = ds[...]
         first = names[0].decode('ascii')
         extensions_to_try = supported_extensions if (splitext(first.lower())[1] not in supported_extensions) else ('',)
-        directories_to_try = [ dirname(ds.file.filename), splitext(ds.file.filename)[0] ]
+        directories_to_try = [dirname(ds.file.filename), splitext(ds.file.filename)[0]]
         found = False
         for root_dir in directories_to_try:
             for ext in extensions_to_try:
-                if isfile(join(root_dir, first+ext)):
+                if isfile(join(root_dir, first + ext)):
                     found = True
                     break
         if not found:
-            raise RuntimeError(f"Cannot find images for image path dataset. Looking for name {first} with roots {directories_to_try} and extensions {extensions_to_try}")
-        return [ join(root_dir,s.decode('ascii')+ext) for s in names ] # type: ignore[possiblyUnbound]
+            raise RuntimeError(
+                f"Cannot find images for image path dataset. Looking for name {first} with roots {directories_to_try} and extensions {extensions_to_try}"
+            )
+        return [join(root_dir, s.decode('ascii') + ext) for s in names]  # type: ignore[possiblyUnbound]
 
-    def __getitem__(self, index : int):
+    def __getitem__(self, index: int):
         return Image.open(self._filelist[index])
 
     def __len__(self):
@@ -52,10 +53,10 @@ class ImagePathDs(object):
 
 
 class DirectNumpyDs(object):
-    def __init__(self, ds : h5py.Dataset):
+    def __init__(self, ds: h5py.Dataset):
         self._ds = ds
 
-    def __getitem__(self, index : int):
+    def __getitem__(self, index: int):
         return self._ds[index][...]
 
     def __len__(self):
@@ -66,7 +67,7 @@ MaybeWrappedH5Dataset = Union[DirectNumpyDs, ImagePathDs]
 Whitelist = List[str]
 
 
-def open_dataset(g : h5py.Group, name : str) -> MaybeWrappedH5Dataset:
+def open_dataset(g: h5py.Group, name: str) -> MaybeWrappedH5Dataset:
     ds = g[name]
     assert isinstance(ds, h5py.Dataset)
     if not 'storage' in ds.attrs:
@@ -81,15 +82,13 @@ class Hdf5PoseDataset(object):
     def __init__(self, filename):
         self.filename = filename
         self._h5file = f = h5py.File(self.filename, 'r')
-        self._datasets = [
-            (k,open_dataset(f,k)) for k, v in f.items() 
-        ]
+        self._datasets = [(k, open_dataset(f, k)) for k, v in f.items()]
         _, d = next(iter(self._datasets))
         self._frame_count = len(d)
 
     @property
     def filenames(self):
-        return [ splitext(b.decode('ascii'))[0] for b in self._h5file['images'][...] ]
+        return [splitext(b.decode('ascii'))[0] for b in self._h5file['images'][...]]
 
     def close(self):
         if self._h5file is not None:
@@ -105,11 +104,9 @@ class Hdf5PoseDataset(object):
         return self._frame_count
 
     def __getitem__(self, index) -> tuple[str, AugmentedSample]:
-        if index<0 or index >= len(self):
+        if index < 0 or index >= len(self):
             raise IndexError(f"Index {index} on dataset of length {len(self)}")
-        fields : dict[str,Any] = {
-            k:ds[index] for k,ds in self._datasets
-        }
+        fields: dict[str, Any] = {k: ds[index] for k, ds in self._datasets}
         sample = AugmentedSample(
             image=np.asarray(fields.pop('images')),
             rot=Rotation.from_quat(fields.pop('quats')),

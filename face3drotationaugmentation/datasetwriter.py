@@ -8,6 +8,7 @@ import contextlib
 
 from .common import AugmentedSample, FloatArray, UInt8Array
 
+
 class FieldCategory(object):
     general = ''
     image = 'img'
@@ -25,6 +26,7 @@ class DatasetWriter(object):
     Images are stored in a directory which is given the same name as the file.
     The "images" dataset in the h5 provides the image filename per sample.
     '''
+
     def __init__(self, filename):
         self._filename = filename
         self._imagedir = os.path.splitext(filename)[0]
@@ -44,32 +46,32 @@ class DatasetWriter(object):
                 dat[k] = np.stack(v)
 
         N = len(next(iter(dat.values())))
-        assert all(len(x)==N for x in dat.values())
+        assert all(len(x) == N for x in dat.values())
         cs = min(N, 1024)
 
         sequence_starts = np.cumsum([0] + list(self._counts_by_name.values()))
-        xys = np.concatenate([dat['xy'], dat['scale'][:,None]], axis=-1)
-        quats = dat['rot'] # Already converted in .write()
+        xys = np.concatenate([dat['xy'], dat['scale'][:, None]], axis=-1)
+        quats = dat['rot']  # Already converted in .write()
         image = dat['image']
         pt3d_68 = dat['pt3d_68']
         roi = dat['roi']
         shapeparam = dat['shapeparam']
 
         with h5py.File(self._filename, 'w') as f:
-            ds_quats = f.create_dataset('quats', (N,4), chunks=(cs,4), dtype='f4', data = quats)
-            ds_coords = f.create_dataset('coords', (N,3), chunks=(cs,3), dtype='f4', data = xys)
-            ds_pt3d_68 = f.create_dataset('pt3d_68', (N,68,3), chunks=(cs,68,3), dtype='f4', data = pt3d_68)
-            ds_roi = f.create_dataset('rois', (N,4), chunks=(cs,4), dtype='f4', data = roi)
-            ds_img = f.create_dataset('images', (N,), chunks=(cs,), data = image)
+            ds_quats = f.create_dataset('quats', (N, 4), chunks=(cs, 4), dtype='f4', data=quats)
+            ds_coords = f.create_dataset('coords', (N, 3), chunks=(cs, 3), dtype='f4', data=xys)
+            ds_pt3d_68 = f.create_dataset('pt3d_68', (N, 68, 3), chunks=(cs, 68, 3), dtype='f4', data=pt3d_68)
+            ds_roi = f.create_dataset('rois', (N, 4), chunks=(cs, 4), dtype='f4', data=roi)
+            ds_img = f.create_dataset('images', (N,), chunks=(cs,), data=image)
             ds_img.attrs['storage'] = 'image_filename'
-            f.create_dataset('shapeparams', (N,50), chunks=(cs,50), dtype='f4', data = shapeparam)
-            f.create_dataset('sequence_starts', dtype='i4', data = sequence_starts)
+            f.create_dataset('shapeparams', (N, 50), chunks=(cs, 50), dtype='f4', data=shapeparam)
+            f.create_dataset('sequence_starts', dtype='i4', data=sequence_starts)
             for ds, category in [
-                (ds_quats,FieldCategory.quat),
-                (ds_coords,FieldCategory.xys),
-                (ds_pt3d_68,FieldCategory.points),
-                (ds_roi,FieldCategory.roi),
-                (ds_img,FieldCategory.image),
+                (ds_quats, FieldCategory.quat),
+                (ds_coords, FieldCategory.xys),
+                (ds_pt3d_68, FieldCategory.points),
+                (ds_roi, FieldCategory.roi),
+                (ds_img, FieldCategory.image),
             ]:
                 ds.attrs['category'] = category
 
@@ -84,15 +86,14 @@ class DatasetWriter(object):
             self._names[name] = None
         return num
 
-    def _handle_image(self, name : str, sample : AugmentedSample):
+    def _handle_image(self, name: str, sample: AugmentedSample):
         os.makedirs(os.path.dirname(os.path.join(self._imagedir, name)), exist_ok=True)
         i = self._handle_counting(name)
         imagefilename = f"{name}_{i:02d}.jpg"
-        Image.fromarray(sample.image).save(
-            os.path.join(self._imagedir, imagefilename), quality=self.jpgquality)
+        Image.fromarray(sample.image).save(os.path.join(self._imagedir, imagefilename), quality=self.jpgquality)
         return imagefilename
 
-    def write(self, name : str, sample : AugmentedSample):
+    def write(self, name: str, sample: AugmentedSample):
         assert sample.roi is not None
         assert sample.pt3d_68 is not None
         data = sample._asdict()

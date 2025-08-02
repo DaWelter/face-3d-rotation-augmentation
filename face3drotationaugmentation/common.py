@@ -1,4 +1,4 @@
-from typing import NamedTuple,Any
+from typing import NamedTuple, Any
 import numpy as np
 import numpy.typing as npt
 from scipy.spatial.transform import Rotation
@@ -8,11 +8,12 @@ FloatArray = npt.NDArray[np.floating[Any]]
 IntArray = npt.NDArray[np.integer[Any]]
 UInt8Array = npt.NDArray[np.uint8]
 
+
 class AugmentedSample(NamedTuple):
     """A sample with augmented face parameters.
 
     See readme for details on the coordinate system.
-    
+
     Attributes:
         image: The rendered image with the augmented face. HWC format.
         rot: Rotation.
@@ -22,6 +23,7 @@ class AugmentedSample(NamedTuple):
         roi: Face bounding box. x0y0x1y1 format.
         shapeparam: Shape parameters. 40 for actual shape. 10 for expression.
     """
+
     image: UInt8Array
     rot: Rotation
     xy: FloatArray
@@ -31,4 +33,4 @@ class AugmentedSample(NamedTuple):
     shapeparam: FloatArray
 
 
-deg2rad = np.pi/180.
+deg2rad = np.pi / 180.0
