@@ -4,25 +4,56 @@ Face 3d Rotation Augmentation / Synthesis
 This is a reproduction of the augmentation that was used to expand the
 face pose datasets for the creation of the 300W-LP dataset. (http://www.cbsr.ia.ac.cn/users/xiangyuzhu/projects/3DDFA/main.htm)
 
-**It only covers the synthesis. Not the initial fitting.** Therefore a dataset with ground truth is required. Currently the original 300W-LP dataset.
+**It only covers the synthesis. Not the initial fitting.** Therefore a dataset with ground truth is required. 
+Currently the original 300W-LP dataset.
+
+Usage
+-----
+
+```bash
+# Activate local development environment, install dependencies, then install this package into your env
+python -m pip install -e .
+
+# Run on existing base images
+python expand_dataset.py --format 300wlp <options> <original 300wlp like zip> <output dir>
+```
+
+Dependencies
+------------
+
+* Python
+* Numpy
+* Scipy
+* Pyrender
+* PyTorch
+* OpenCV
+* PIL
+* trimesh
+* tqdm
+* hdf5
 
 Outputs
 -------
 
-Beware hat the output format is different from 300W-LP.
+With `--format 300wlp` the `expand_dataset` script writes images and label to a directory in a 300wlp compatible format.
+I.e. there will be `.mat` files with pose data (pitch, yaw, roll, tx, ty, tz, scale), shape parameters and expression
+parameters. Landmarks are currently not saved, but it would be easy to add.
 
-The code currently produces a hdf5 with
+This should be sufficient for training pose estimators. Other information will be missing.
+
+With `--format custom_hdf5` labels will be written into a hdf5 file containing:
 
 * filename of the output image
 * rotation quaternion
 * roi in x0,y0,x1,y1 format
 * 3-element vector composed of xy and size
-* 50 shape parameters. First 40 are for actual face shape, the last 10 for expressions. This relates to the shape and expression basis used in https://github.com/cleardusk/3DDFA_V2 among other works.
+* 50 shape parameters. First 40 are for actual face shape, the last 10 for expressions. This relates to the shape 
+and expression basis used in https://github.com/cleardusk/3DDFA_V2 among other works.
 
 The images are stored in a folder with the same name as the hdf5.
 Coordinates are in image space. Y points down, X left and Z into the image.
 
-In contrast to [1],[2] and all the other works I rescaled the shape basis + parameters and the head size. Moreover I moved the origin to a point between the eyes.
+In contrast to [1],[2] and all the other works I rescaled the shape basis + parameters and the head size. Moreover, I moved the origin to a point between the eyes. (This relates only to the hdf5 format!)
 
 Results
 -------
@@ -106,12 +137,6 @@ And some more views, including the morph targets with closed eyes.
 
 ![](doc/mesh4.png)
 
-
-Todo
-----
-
-* Make the output more standard. Pull requests are welcome.
-* Deformation more similar to original.
 
 References
 ----------
